@@ -70,11 +70,22 @@ class DecisionEngine:
             action = str(raw.get("action", "HOLD")).upper()
             if action not in {"BUY", "SELL", "HOLD"}:
                 action = "HOLD"
+            reasoning = str(raw.get("reasoning") or "").strip()[:500]
+            confidence = clamp01(raw.get("confidence"), 0.0)
+            # Flag lazy outputs so the dashboard makes the issue visible
+            # rather than masking it as a real "no edge" call.
+            if len(reasoning) < 15 or reasoning.lower() in {
+                "conflicted", "mixed", "mixed signals", "no edge",
+                "unclear", "uncertain", "neutral",
+            }:
+                reasoning = f"[low-quality LLM output: '{reasoning}'] " \
+                            "model gave no specific reasoning — treat as no-edge"
+                confidence = max(confidence, 0.2)
             return Decision(
                 action=action,
                 size_pct=clamp01(raw.get("size_pct"), 0.0),
-                confidence=clamp01(raw.get("confidence"), 0.0),
-                reasoning=str(raw.get("reasoning") or "")[:500],
+                confidence=confidence,
+                reasoning=reasoning,
                 source="llm",
             )
         except Exception as e:

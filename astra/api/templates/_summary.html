@@ -20,6 +20,26 @@
   <div class="sc {{ 'pnl-pos' if unrealized > 0 else ('pnl-neg' if unrealized < 0 else '') }}">
     <em>Unrealized</em>
     <strong>{{ "+" if unrealized >= 0 else "" }}${{ "%.2f"|format(unrealized) }}</strong>
-    <span class="muted small">across {{ position_count }} position{% if position_count != 1 %}s{% endif %}</span>
+    <span class="muted small">price vs avg cost on {{ position_count }} open</span>
   </div>
+
+  <div class="sc {{ 'pnl-pos' if realized_pnl > 0 else ('pnl-neg' if realized_pnl < 0 else '') }}">
+    <em>Realized</em>
+    <strong>{{ "+" if realized_pnl >= 0 else "" }}${{ "%.2f"|format(realized_pnl) }}</strong>
+    <span class="muted small">from closed trades</span>
+  </div>
+
+  <div class="sc">
+    <em>Fees paid</em>
+    <strong>-${{ "%.2f"|format(fees_paid) }}</strong>
+    <span class="muted small">{{ trade_count }} trade{% if trade_count != 1 %}s{% endif %}</span>
+  </div>
+</div>
+
+<div class="pnl-formula muted small">
+  Breakdown:
+  <strong>${{ "%.2f"|format(total_pnl) }}</strong> total
+  = ${{ "%.2f"|format(unrealized) }} unrealized
+  + ${{ "%.2f"|format(realized_pnl) }} realized
+  &minus; ${{ "%.2f"|format(open_position_drag) }} fees &amp; slippage on open positions
 </div>

@@ -108,6 +108,10 @@ form button { align-self: flex-start; }
 .summary-cards .sc.pnl-neg { border-color: #4a1f1f; }
 .summary-cards .sc.pnl-neg strong { color: #f88; }
 
+.pnl-formula { padding: 8px 12px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; margin-bottom: 16px; }
+.pnl-formula strong { color: var(--accent-2); }
+
 /* Universe scan header */
 .scan-header { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;
   padding-bottom: 8px; border-bottom: 1px solid var(--border); }

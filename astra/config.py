@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     watchlist_size: int = Field(default=25, alias="ASTRA_WATCHLIST_SIZE")
     max_position_pct: float = Field(default=0.08, alias="ASTRA_MAX_POSITION_PCT")
     daily_loss_limit_pct: float = Field(default=0.05, alias="ASTRA_DAILY_LOSS_LIMIT_PCT")
-    fee_per_trade: float = Field(default=1.0, alias="ASTRA_FEE_PER_TRADE")
+    fee_per_trade: float = Field(default=0.05, alias="ASTRA_FEE_PER_TRADE")
     slippage_bps: float = Field(default=5.0, alias="ASTRA_SLIPPAGE_BPS")
 
     # Auto-exit rules — enforced before the LLM/heuristic even sees the symbol.

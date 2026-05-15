@@ -231,6 +231,21 @@ def build_router(app: FastAPI) -> APIRouter:
         today = datetime.now(timezone.utc).date().isoformat() if hist else ""
         today_points = [h for h in hist if h["ts"].startswith(today)] if hist else []
         day_open = today_points[0]["equity"] if today_points else (hist[0]["equity"] if hist else equity)
+
+        # Decompose total P&L so the user can see why equity != starting + unrealized.
+        # total_pnl = realized_pnl + unrealized_pnl - fees_on_open_positions
+        all_trades = await portfolio.list_trades(limit=100000)
+        fees_paid = sum(float(t.get("fees") or 0) for t in all_trades)
+        realized_pnl = sum(
+            float(t.get("pnl") or 0)
+            for t in all_trades
+            if t.get("side") == "SELL" and t.get("pnl") is not None
+        )
+        total_pnl = equity - start
+        unrealized = market_value - cost_basis
+        # The remainder of total P&L not explained by current MTM or closed
+        # trades is the buy-fee + slippage drag on positions still open.
+        open_position_drag = (unrealized + realized_pnl) - total_pnl
         return templates.TemplateResponse(
             request, "_summary.html",
             {
@@ -238,10 +253,14 @@ def build_router(app: FastAPI) -> APIRouter:
                 "cash": cash,
                 "market_value": market_value,
                 "starting_balance": start,
-                "total_pnl": equity - start,
-                "total_pnl_pct": ((equity - start) / start) if start > 0 else 0.0,
-                "unrealized": market_value - cost_basis,
-                "unrealized_pct": ((market_value - cost_basis) / cost_basis) if cost_basis > 0 else 0.0,
+                "total_pnl": total_pnl,
+                "total_pnl_pct": (total_pnl / start) if start > 0 else 0.0,
+                "unrealized": unrealized,
+                "unrealized_pct": (unrealized / cost_basis) if cost_basis > 0 else 0.0,
+                "realized_pnl": realized_pnl,
+                "fees_paid": fees_paid,
+                "open_position_drag": open_position_drag,
+                "trade_count": len(all_trades),
                 "day_change": equity - day_open,
                 "day_change_pct": ((equity - day_open) / day_open) if day_open > 0 else 0.0,
                 "position_count": len(positions),

@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from astra.data.finnhub import FinnhubClient
+from astra.data.yahoo import fetch_daily_candles
 from astra.signals import fundamentals, insider, news, technical
 
 log = logging.getLogger(__name__)
@@ -82,32 +83,24 @@ class SignalAggregator:
 
     async def fetch(self, symbol: str) -> SignalBundle:
         b = SignalBundle(symbol=symbol, fetched_at=time.time())
-        now = int(time.time())
-        from_ts = now - 60 * 60 * 24 * 90  # 90d daily
 
         async def _quote() -> None:
             try:
                 b.quote = await self.client.quote(symbol)
+            except PermissionError:
+                pass  # known disabled endpoint
             except Exception as e:
                 b.errors.append(f"quote:{e}")
 
         async def _tech() -> None:
+            # Primary source: yfinance (free, daily candles). Finnhub free tier
+            # no longer includes /stock/candle.
             try:
-                data = await self.client.candles(symbol, "D", from_ts, now)
-                if data.get("s") == "ok":
-                    rows = []
-                    for i in range(len(data.get("t", []))):
-                        rows.append({
-                            "t": data["t"][i],
-                            "o": data["o"][i],
-                            "h": data["h"][i],
-                            "l": data["l"][i],
-                            "c": data["c"][i],
-                            "v": data.get("v", [0] * len(data["t"]))[i],
-                        })
+                rows = await fetch_daily_candles(symbol, days=180)
+                if rows:
                     b.technical = technical.compute_indicators(rows)
                 else:
-                    b.technical = {"available": False, "reason": data.get("s", "no_data")}
+                    b.technical = {"available": False, "reason": "no_candles"}
             except Exception as e:
                 b.errors.append(f"candles:{e}")
                 b.technical = {"available": False, "reason": str(e)}
@@ -117,6 +110,8 @@ class SignalAggregator:
                 fr, to = news.date_range(5)
                 items = await self.client.company_news(symbol, fr, to)
                 b.news = news.summarize_headlines(items)
+            except PermissionError:
+                pass
             except Exception as e:
                 b.errors.append(f"news:{e}")
 
@@ -124,6 +119,8 @@ class SignalAggregator:
             try:
                 s = await self.client.news_sentiment(symbol)
                 b.sentiment = news.summarize_sentiment(s)
+            except PermissionError:
+                pass
             except Exception as e:
                 b.errors.append(f"sentiment:{e}")
 
@@ -131,6 +128,8 @@ class SignalAggregator:
             try:
                 d = await self.client.insider_transactions(symbol)
                 b.insider = insider.summarize_insider(d)
+            except PermissionError:
+                pass
             except Exception as e:
                 b.errors.append(f"insider:{e}")
 
@@ -138,6 +137,8 @@ class SignalAggregator:
             try:
                 r = await self.client.recommendation(symbol)
                 b.recommendations = fundamentals.summarize_recommendations(r)
+            except PermissionError:
+                pass
             except Exception as e:
                 b.errors.append(f"recs:{e}")
 
@@ -145,6 +146,8 @@ class SignalAggregator:
             try:
                 e = await self.client.earnings(symbol)
                 b.earnings = fundamentals.summarize_earnings(e)
+            except PermissionError:
+                pass
             except Exception as e:
                 b.errors.append(f"earnings:{e}")
 
@@ -155,6 +158,8 @@ class SignalAggregator:
                 to = (today + timedelta(days=21)).isoformat()
                 cal = await self.client.earnings_calendar(fr, to, symbol)
                 b.earnings_calendar = fundamentals.summarize_calendar(cal, symbol)
+            except PermissionError:
+                pass
             except Exception as e:
                 b.errors.append(f"calendar:{e}")
 
@@ -176,6 +181,8 @@ class SignalAggregator:
                     }
                 else:
                     b.social = {"available": False}
+            except PermissionError:
+                pass
             except Exception as e:
                 b.errors.append(f"social:{e}")
 

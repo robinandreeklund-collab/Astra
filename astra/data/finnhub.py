@@ -39,6 +39,9 @@ class TokenBucket:
 
 
 class FinnhubClient:
+    # Endpoints that returned 401/403 once during this process — don't retry them.
+    _disabled_paths: set[str] = set()
+
     def __init__(self, api_key: str | None = None, cache: CacheDB | None = None) -> None:
         self.api_key = api_key or settings.finnhub_api_key
         self.cache = cache
@@ -60,6 +63,10 @@ class FinnhubClient:
         params: dict[str, Any] | None = None,
         cache_ttl: int | None = None,
     ) -> Any:
+        # Skip endpoints we know are not on this account's plan.
+        if path in self._disabled_paths:
+            raise PermissionError(f"endpoint disabled (prior 4xx): {path}")
+
         params = dict(params or {})
         params["token"] = self.api_key
         cache_key = None
@@ -74,14 +81,27 @@ class FinnhubClient:
         for attempt in range(3):
             try:
                 resp = await self.client.get(f"{BASE_URL}{path}", params=params)
+                # Hard-stop on auth/plan errors — no point retrying.
+                if resp.status_code in (401, 403):
+                    self._disabled_paths.add(path)
+                    log.warning(
+                        "Finnhub %s returned %s — disabling for this run (plan limit?)",
+                        path, resp.status_code,
+                    )
+                    raise PermissionError(f"{path} status {resp.status_code}")
                 if resp.status_code == 429:
-                    await asyncio.sleep(2 + attempt * 2)
+                    # Respect Retry-After if present.
+                    ra = resp.headers.get("Retry-After")
+                    delay = float(ra) if ra and ra.replace(".", "").isdigit() else (2 + attempt * 2)
+                    await asyncio.sleep(min(delay, 10))
                     continue
                 resp.raise_for_status()
                 data = resp.json()
                 if cache_key and cache_ttl and self.cache is not None:
                     await self.cache.set(cache_key, data, cache_ttl)
                 return data
+            except PermissionError:
+                raise
             except (httpx.HTTPError, httpx.RequestError) as e:
                 last_exc = e
                 await asyncio.sleep(1 + attempt)

@@ -10,11 +10,18 @@ for ONE stock and decide BUY, SELL, or HOLD.
 Output a single JSON object, nothing else:
 {"action":"BUY|SELL|HOLD","size_pct":0.0,"confidence":0.0,"reasoning":"short"}
 
-Rules:
-- size_pct is 0.0-1.0 of max position size
-- HOLD if confidence < 0.4 or signals are mixed
-- NEVER BUY if earnings are within 2 days
-- SELL when holding AND signals turn bearish OR big gain captured
+Decision principles:
+- BIAS TOWARD ACTION when the CHANGES block shows momentum (RSI flip, MACD cross,
+  volume spike, sentiment shift). Fresh changes are more actionable than static
+  absolute values.
+- A confidence of 0.3-0.5 with size_pct ~0.4 is a valid "exploratory" position —
+  don't HOLD just because you're not 100% sure.
+- size_pct = 1.0 is reserved for very high-conviction setups (3+ strong signals
+  aligned + favourable CHANGES).
+- HOLD only when signals are truly conflicted or there is no edge.
+- NEVER BUY if earnings are within 2 days.
+- SELL when holding AND signals turn bearish, momentum reverses, or stop/profit
+  targets are hit by your own assessment.
 """
 
 SYSTEM_REFLECTOR = """Read recent closed trades and write up to 3 short, concrete
@@ -107,6 +114,13 @@ def build_decision_user_prompt(
             hl = (h.get("headline") or "").strip()
             if hl:
                 parts.append(f"NEWS: {hl[:120]}")
+
+    # Tick-over-tick changes — high-signal block for the model
+    deltas = bundle_dict.get("_deltas") or {}
+    if deltas.get("available"):
+        parts.append("CHANGES since last tick:")
+        for ch in deltas.get("changes", []):
+            parts.append(f"  · {ch}")
 
     if lessons:
         parts.append("LESSONS:")

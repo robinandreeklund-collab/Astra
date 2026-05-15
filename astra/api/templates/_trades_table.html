@@ -1,16 +1,22 @@
 <table class="table">
-  <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>PnL</th></tr></thead>
+  <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>PnL</th><th>Why</th></tr></thead>
   <tbody>
   {% for t in trades %}
+    {% set reasoning = t.llm_reasoning or '' %}
+    {% set forced = reasoning.startswith('STOP-LOSS') or reasoning.startswith('TAKE-PROFIT') %}
     <tr class="{{ 'win' if (t.pnl or 0) > 0 else ('loss' if (t.pnl or 0) < 0 else '') }}">
       <td class="muted small">{{ t.executed_at[11:19] }}</td>
       <td><strong>{{ t.symbol }}</strong></td>
-      <td><span class="badge {{ t.side|lower }}">{{ t.side }}</span></td>
+      <td>
+        <span class="badge {{ t.side|lower }}">{{ t.side }}</span>
+        {% if forced %}<span class="badge forced" title="{{ reasoning }}">AUTO</span>{% endif %}
+      </td>
       <td>{{ "%.4f"|format(t.qty) }}</td>
       <td>${{ "%.2f"|format(t.price) }}</td>
       <td>{% if t.pnl is not none %}${{ "%.2f"|format(t.pnl) }}{% else %}—{% endif %}</td>
+      <td class="muted small">{{ reasoning[:80] }}</td>
     </tr>
   {% endfor %}
-  {% if not trades %}<tr><td colspan="6" class="muted center">No trades yet.</td></tr>{% endif %}
+  {% if not trades %}<tr><td colspan="7" class="muted center">No trades yet.</td></tr>{% endif %}
   </tbody>
 </table>

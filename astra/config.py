@@ -26,11 +26,21 @@ class Settings(BaseSettings):
     port: int = Field(default=8765, alias="ASTRA_PORT")
 
     tick_seconds: int = Field(default=300, alias="ASTRA_TICK_SECONDS")
-    watchlist_size: int = Field(default=10, alias="ASTRA_WATCHLIST_SIZE")
-    max_position_pct: float = Field(default=0.05, alias="ASTRA_MAX_POSITION_PCT")
-    daily_loss_limit_pct: float = Field(default=0.03, alias="ASTRA_DAILY_LOSS_LIMIT_PCT")
+    watchlist_size: int = Field(default=25, alias="ASTRA_WATCHLIST_SIZE")
+    max_position_pct: float = Field(default=0.08, alias="ASTRA_MAX_POSITION_PCT")
+    daily_loss_limit_pct: float = Field(default=0.05, alias="ASTRA_DAILY_LOSS_LIMIT_PCT")
     fee_per_trade: float = Field(default=1.0, alias="ASTRA_FEE_PER_TRADE")
     slippage_bps: float = Field(default=5.0, alias="ASTRA_SLIPPAGE_BPS")
+
+    # Auto-exit rules — enforced before the LLM/heuristic even sees the symbol.
+    stop_loss_pct: float = Field(default=0.05, alias="ASTRA_STOP_LOSS_PCT")
+    take_profit_pct: float = Field(default=0.15, alias="ASTRA_TAKE_PROFIT_PCT")
+    min_confidence: float = Field(default=0.30, alias="ASTRA_MIN_CONFIDENCE")
+
+    # User-supplied priority watchlist, comma-separated. These symbols always
+    # get evaluated first; the rest of the slot count is filled from the
+    # S&P 500 universe.
+    custom_watchlist: str = Field(default="", alias="ASTRA_CUSTOM_WATCHLIST")
 
     data_dir: Path = Field(default=Path("./data"), alias="ASTRA_DATA_DIR")
 

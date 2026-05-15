@@ -44,7 +44,16 @@ class EngineState:
         # Cache last seen prices by symbol so the UI can show live P&L
         # without re-fetching per request. Updated at the end of each tick.
         self.last_prices: dict[str, float] = {}
+        # Per-symbol short signal history (most recent first). Used to compute
+        # tick-over-tick deltas for the LLM prompt.
+        self.signal_history: dict[str, list[dict[str, Any]]] = {}
         self.subscribers: list[asyncio.Queue[TickEvent]] = []
+
+    def push_signal(self, symbol: str, snapshot: dict[str, Any], keep: int = 3) -> None:
+        hist = self.signal_history.setdefault(symbol, [])
+        hist.insert(0, snapshot)
+        if len(hist) > keep:
+            del hist[keep:]
 
     async def broadcast(self, evt: TickEvent) -> None:
         dead: list[asyncio.Queue[TickEvent]] = []
@@ -95,8 +104,10 @@ class TradingEngine:
         return self._universe
 
     async def watchlist(self) -> list[str]:
+        from astra.data.universe import parse_custom_watchlist
         u = await self.ensure_universe()
-        return watchlist_from_universe(u, settings.watchlist_size)
+        priority = parse_custom_watchlist(settings.custom_watchlist)
+        return watchlist_from_universe(u, settings.watchlist_size, priority=priority)
 
     async def tick(self) -> dict[str, Any]:
         """Run one decision cycle across the watchlist."""
@@ -143,6 +154,62 @@ class TradingEngine:
                 prices[symbol] = ref_price
 
                 pos = await self.portfolio.get_position(symbol)
+
+                # === Hard exit rules (run BEFORE the model) ===
+                # Stop-loss / take-profit are absolute risk rules; the LLM
+                # cannot override them. We compute them inline so they fire
+                # even when the LLM/heuristic would say HOLD.
+                if pos is not None and ref_price > 0:
+                    avg = float(pos["avg_price"])
+                    pct = (ref_price - avg) / avg if avg > 0 else 0.0
+                    forced_reason = None
+                    if pct <= -settings.stop_loss_pct:
+                        forced_reason = (
+                            f"STOP-LOSS: {pct*100:.1f}% drawdown "
+                            f"(limit -{settings.stop_loss_pct*100:.0f}%)"
+                        )
+                    elif pct >= settings.take_profit_pct:
+                        forced_reason = (
+                            f"TAKE-PROFIT: {pct*100:+.1f}% gain "
+                            f"(target +{settings.take_profit_pct*100:.0f}%)"
+                        )
+                    if forced_reason:
+                        ph, pdesc = bundle.pattern_hash()
+                        snap = bundle.to_dict()
+                        snap["_pattern_desc"] = pdesc
+                        snap["_decision"] = {
+                            "action": "SELL", "size_pct": 1.0,
+                            "confidence": 1.0, "reasoning": forced_reason,
+                            "source": "forced",
+                        }
+                        try:
+                            fill = await broker.sell(symbol, float(pos["qty"]),
+                                                     ref_price, snap, forced_reason, ph)
+                            actions.append({"symbol": symbol, "action": "SELL",
+                                            "qty": fill.qty, "price": fill.price,
+                                            "pnl": fill.pnl, "forced": True})
+                            await self.portfolio.log_thought(
+                                symbol, "SELL", 1.0, forced_reason
+                            )
+                            await self.state.broadcast(TickEvent("trade", {
+                                "symbol": symbol, "side": "SELL", "qty": fill.qty,
+                                "price": fill.price, "pnl": fill.pnl,
+                                "reasoning": forced_reason,
+                            }))
+                            sell_trade = await self.portfolio.list_trades(limit=1)
+                            if sell_trade:
+                                await recorder.record_close(sell_trade[0])
+                        except NoPosition:
+                            pass
+                        continue  # skip LLM call for this symbol
+
+                # === Build prompt with tick-over-tick deltas ===
+                from astra.signals.deltas import compute_deltas
+                prior_snapshots = self.state.signal_history.get(symbol, [])
+                prior_snap = prior_snapshots[0] if prior_snapshots else None
+                bundle_dict = bundle.to_dict()
+                bundle_dict["_deltas"] = compute_deltas(bundle_dict, prior_snap)
+
                 lessons, patterns = await retriever.for_decision(
                     bundle.pattern_hash()[0]
                 )
@@ -150,13 +217,15 @@ class TradingEngine:
                 cash = acc["cash"] if acc else 0.0
 
                 decision = await decider.decide(
-                    bundle.to_dict(), pos, cash, lessons, patterns
+                    bundle_dict, pos, cash, lessons, patterns
                 )
 
                 pattern_hash, pattern_desc = bundle.pattern_hash()
-                snapshot = bundle.to_dict()
+                snapshot = bundle_dict
                 snapshot["_pattern_desc"] = pattern_desc
                 snapshot["_decision"] = decision.to_dict()
+                # Store this snapshot so the next tick can diff against it.
+                self.state.push_signal(symbol, bundle_dict)
 
                 await self.portfolio.log_thought(
                     symbol=symbol,

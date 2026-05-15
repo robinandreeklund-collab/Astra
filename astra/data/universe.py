@@ -39,5 +39,30 @@ async def load_universe(client: FinnhubClient | None = None) -> list[str]:
     return list(FALLBACK_SP500)
 
 
-def watchlist_from_universe(universe: list[str], size: int) -> list[str]:
-    return universe[: max(1, size)]
+def watchlist_from_universe(
+    universe: list[str],
+    size: int,
+    priority: list[str] | None = None,
+) -> list[str]:
+    """Return up to `size` tickers, putting `priority` first when given.
+
+    The priority list survives even if Finnhub doesn't include those tickers
+    (they're added before universe fill-up). Duplicates are removed while
+    preserving order.
+    """
+    size = max(1, size)
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in (priority or []) + universe:
+        s = s.strip().upper()
+        if not s or s in seen:
+            continue
+        out.append(s)
+        seen.add(s)
+        if len(out) >= size:
+            break
+    return out
+
+
+def parse_custom_watchlist(raw: str) -> list[str]:
+    return [s.strip().upper() for s in (raw or "").split(",") if s.strip()]

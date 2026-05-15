@@ -32,6 +32,7 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
 .badge.sell { background: #3a1414; color: #f88; }
 .badge.hold { background: #2a2a2a; color: #aaa; }
 .badge.skip { background: #2a2a2a; color: #aaa; }
+.badge.forced { background: #4a3a14; color: #fc6; margin-left: 4px; }
 
 main { max-width: 1200px; margin: 18px auto; padding: 0 16px; }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;

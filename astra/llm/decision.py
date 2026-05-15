@@ -160,6 +160,14 @@ class HeuristicDecisionEngine:
             except Exception:
                 pass
 
+        # Use tick-over-tick changes to amplify a signal that's "small but
+        # rising" — momentum information often beats absolute levels.
+        deltas = bundle_dict.get("_deltas") or {}
+        change_count = len(deltas.get("changes", [])) if deltas.get("available") else 0
+        # The "no notable changes" sentinel doesn't count as momentum.
+        if change_count == 1 and "no notable changes" in (deltas.get("changes") or [""])[0]:
+            change_count = 0
+
         signal_strength = abs(bull - bear)
         total = bull + bear
 
@@ -168,26 +176,31 @@ class HeuristicDecisionEngine:
             last = tech.get("last_close") or 0
             avg = position.get("avg_price") or 0
             gain = (last - avg) / avg if avg > 0 else 0
-            if gain > 0.10 and bear >= 1:
+            if gain > 0.08 and bear >= 1:
                 return Decision("SELL", 1.0, min(0.9, 0.5 + signal_strength * 0.1),
                                 "Take profit + bearish signal(s): " + ", ".join(reasons),
                                 "heuristic")
-            if bear >= bull + 2 and total >= 3:
+            if bear >= bull + 1 and total >= 2:
                 return Decision("SELL", 1.0, 0.6,
                                 "Bearish dominance: " + ", ".join(reasons),
                                 "heuristic")
-            if gain < -0.08:
-                return Decision("SELL", 1.0, 0.7,
-                                f"Stop-loss at {gain:.1%}", "heuristic")
 
         if block_buy:
             return Decision("HOLD", 0.0, 0.3,
                             "Earnings imminent; " + ", ".join(reasons),
                             "heuristic")
-        if bull >= bear + 2 and total >= 3 and position is None:
-            conf = min(0.85, 0.4 + signal_strength * 0.1)
-            return Decision("BUY", min(1.0, 0.5 + signal_strength * 0.1), conf,
-                            "Bullish signals: " + ", ".join(reasons),
+
+        # BUY threshold: bull > bear AND at least 2 signals OR there's
+        # active momentum (CHANGES block has 1+ notable events).
+        if position is None and (
+            (bull >= bear + 1 and total >= 2) or
+            (bull >= bear and change_count >= 1 and bull >= 1)
+        ):
+            conf = min(0.85, 0.35 + signal_strength * 0.1 + 0.05 * change_count)
+            size = min(1.0, 0.4 + signal_strength * 0.1 + 0.05 * change_count)
+            return Decision("BUY", size, conf,
+                            "Bullish: " + ", ".join(reasons) +
+                            (f"; CHANGES: {change_count}" if change_count else ""),
                             "heuristic")
 
         return Decision("HOLD", 0.0, 0.3 + 0.05 * signal_strength,

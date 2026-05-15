@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from astra.llm.client import LMStudioClient
+from astra.llm.client import DECISION_SCHEMA, LMStudioClient
 from astra.llm.prompts import (
     SYSTEM_TRADER,
     build_decision_user_prompt,
@@ -62,7 +62,11 @@ class DecisionEngine:
             return await self.fallback.decide(bundle_dict, position, cash, lessons, pattern_stats)
         try:
             user = build_decision_user_prompt(bundle_dict, position, cash, lessons, pattern_stats)
-            raw = await self.client.chat_json(SYSTEM_TRADER, user, temperature=0.2, max_tokens=400)
+            raw = await self.client.chat_json(
+                SYSTEM_TRADER, user,
+                temperature=0.2, max_tokens=400,
+                schema=DECISION_SCHEMA,
+            )
             action = str(raw.get("action", "HOLD")).upper()
             if action not in {"BUY", "SELL", "HOLD"}:
                 action = "HOLD"

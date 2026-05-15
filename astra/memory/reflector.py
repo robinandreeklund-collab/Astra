@@ -7,7 +7,7 @@ from typing import Any
 
 from astra.db.memory import MemoryDB
 from astra.db.portfolio import PortfolioDB
-from astra.llm.client import LMStudioClient
+from astra.llm.client import REFLECTION_SCHEMA, LMStudioClient
 from astra.llm.prompts import SYSTEM_REFLECTOR, build_reflection_user_prompt
 
 log = logging.getLogger(__name__)
@@ -37,7 +37,9 @@ class Reflector:
             try:
                 user = build_reflection_user_prompt(closed)
                 raw = await self.client.chat_json(
-                    SYSTEM_REFLECTOR, user, temperature=0.3, max_tokens=400
+                    SYSTEM_REFLECTOR, user,
+                    temperature=0.3, max_tokens=400,
+                    schema=REFLECTION_SCHEMA,
                 )
                 lessons = [str(l).strip()[:240] for l in (raw.get("lessons") or []) if l]
             except Exception as e:

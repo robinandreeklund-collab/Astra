@@ -1,10 +1,15 @@
-"""Thin OpenAI-compatible client pointed at LM Studio.
+"""LM Studio OpenAI-compatible client.
 
-We try `response_format: json_object` first (works on GPT/Qwen2.5/Llama3.1).
-Many local models (Gemma, older Llamas, Mistral 7B) return HTTP 400 for that
-parameter — so we transparently fall back to a plain chat completion and let
-the parser extract the JSON object from the response. The fallback decision
-is sticky per process so we don't keep paying the 400 round-trip cost.
+We negotiate the strongest structured-output mode the server accepts:
+
+  1. response_format = {"type": "json_schema", json_schema: {...}}   (strict)
+  2. response_format = {"type": "json_object"}                        (loose)
+  3. no response_format — rely on the model's natural JSON output    (Nemotron,
+     Qwen2.5, Llama3.1 all handle this fine when asked clearly)
+
+LM Studio responds 400 when a particular form isn't supported by the loaded
+model's chat template. Each fallback is sticky for the rest of the process
+so we don't pay the rejection round-trip more than once.
 """
 
 from __future__ import annotations
@@ -20,10 +25,47 @@ from astra.config import settings
 log = logging.getLogger(__name__)
 
 
-class LMStudioClient:
-    # Process-wide flag: once we've seen a 400 on json mode, stop using it.
-    _supports_json_mode: bool = True
+DECISION_SCHEMA: dict[str, Any] = {
+    "name": "trading_decision",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
+            "size_pct": {"type": "number", "minimum": 0, "maximum": 1},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "reasoning": {"type": "string"},
+        },
+        "required": ["action", "size_pct", "confidence", "reasoning"],
+        "additionalProperties": False,
+    },
+}
 
+REFLECTION_SCHEMA: dict[str, Any] = {
+    "name": "trading_lessons",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "lessons": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 5,
+            },
+        },
+        "required": ["lessons"],
+        "additionalProperties": False,
+    },
+}
+
+
+# Process-wide negotiation state, shared by all client instances.
+class _State:
+    schema_ok: bool = True
+    object_ok: bool = True
+
+
+class LMStudioClient:
     def __init__(
         self,
         base_url: str | None = None,
@@ -54,11 +96,12 @@ class LMStudioClient:
         user: str,
         temperature: float,
         max_tokens: int,
-        json_mode: bool,
+        mode: str,
+        schema: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        # When json mode is unavailable we add a strong nudge in the user msg.
-        if not json_mode:
-            user = user + "\n\nReturn ONLY a valid JSON object. No prose, no markdown."
+        # In plain mode, nudge the model with an explicit "JSON only" directive.
+        if mode == "plain":
+            user = user + "\n\nReturn ONLY a valid JSON object. No prose, no markdown fences."
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -68,7 +111,9 @@ class LMStudioClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if json_mode:
+        if mode == "schema" and schema is not None:
+            body["response_format"] = {"type": "json_schema", "json_schema": schema}
+        elif mode == "object":
             body["response_format"] = {"type": "json_object"}
         return body
 
@@ -79,37 +124,59 @@ class LMStudioClient:
             json=body,
         )
 
+    @staticmethod
+    def _explain_400(resp: httpx.Response) -> str:
+        try:
+            j = resp.json()
+            return json.dumps(j)[:500]
+        except Exception:
+            return resp.text[:500]
+
     async def chat_json(
         self,
         system: str,
         user: str,
         temperature: float = 0.2,
         max_tokens: int = 600,
+        schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # First attempt: with json mode if we believe it works.
-        use_json = LMStudioClient._supports_json_mode
-        body = self._build_body(system, user, temperature, max_tokens, json_mode=use_json)
-        resp = await self._post_chat(body)
+        # Build the list of modes to try, in order of strictness.
+        order: list[str] = []
+        if _State.schema_ok and schema is not None:
+            order.append("schema")
+        if _State.object_ok:
+            order.append("object")
+        order.append("plain")
 
-        # If the server rejected json mode, retry once without it and remember.
-        if resp.status_code == 400 and use_json:
-            try:
-                detail = resp.json()
-            except Exception:
-                detail = {"text": resp.text[:200]}
-            log.warning(
-                "LM Studio rejected response_format=json_object (%s) — "
-                "falling back to plain mode for the rest of this run",
-                detail,
-            )
-            LMStudioClient._supports_json_mode = False
-            body = self._build_body(system, user, temperature, max_tokens, json_mode=False)
+        last_400: tuple[str, str] | None = None
+        for mode in order:
+            body = self._build_body(system, user, temperature, max_tokens, mode, schema)
             resp = await self._post_chat(body)
+            if resp.status_code == 400:
+                detail = self._explain_400(resp)
+                last_400 = (mode, detail)
+                # Disable this mode for the rest of the run.
+                if mode == "schema":
+                    _State.schema_ok = False
+                    log.warning(
+                        "LM Studio rejected json_schema mode: %s — trying json_object", detail
+                    )
+                elif mode == "object":
+                    _State.object_ok = False
+                    log.warning(
+                        "LM Studio rejected json_object mode: %s — using plain mode", detail
+                    )
+                else:
+                    log.error("LM Studio rejected even plain mode: %s", detail)
+                    resp.raise_for_status()
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            return self._parse_json(content)
 
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return self._parse_json(content)
+        # Should be unreachable — plain mode either succeeded or raised above.
+        raise RuntimeError(f"LM Studio request failed; last 400: {last_400}")
 
     @staticmethod
     def _parse_json(text: str) -> dict[str, Any]:

@@ -1,0 +1,14 @@
+<table class="table">
+  <thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Opened</th></tr></thead>
+  <tbody>
+  {% for p in positions %}
+    <tr>
+      <td><strong>{{ p.symbol }}</strong></td>
+      <td>{{ "%.4f"|format(p.qty) }}</td>
+      <td>${{ "%.2f"|format(p.avg_price) }}</td>
+      <td class="muted small">{{ p.opened_at[:19] }}</td>
+    </tr>
+  {% endfor %}
+  {% if not positions %}<tr><td colspan="4" class="muted center">No open positions.</td></tr>{% endif %}
+  </tbody>
+</table>

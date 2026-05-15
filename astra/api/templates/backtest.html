@@ -1,0 +1,89 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Backtest{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Run backtest</h2>
+  <form id="bt-form" class="row">
+    <label>Symbols (comma-separated)
+      <input type="text" name="symbols" value="AAPL,MSFT,NVDA,GOOGL,AMZN" required />
+    </label>
+    <label>Starting balance
+      <input type="number" name="starting_balance" value="100000" min="1000" step="1000" required />
+    </label>
+    <label>Days
+      <input type="number" name="days" value="120" min="30" max="730" required />
+    </label>
+    <label class="check">
+      <input type="checkbox" name="use_llm" /> Use LLM (slow)
+    </label>
+    <button type="submit" class="btn primary">Run</button>
+  </form>
+  <p class="muted small" id="bt-status"></p>
+</section>
+
+<section class="card" id="bt-result" style="display:none;">
+  <h2>Result</h2>
+  <div id="bt-summary"></div>
+  <canvas id="bt-chart" height="120"></canvas>
+  <h3>Trades</h3>
+  <table class="table" id="bt-trades">
+    <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>PnL</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('bt-form');
+  const status = document.getElementById('bt-status');
+  const resultDiv = document.getElementById('bt-result');
+  let chart = null;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    status.textContent = 'Running…';
+    const fd = new FormData(form);
+    if (!fd.get('use_llm')) fd.set('use_llm', 'false');
+    else fd.set('use_llm', 'true');
+    try {
+      const r = await fetch('/api/backtest', { method: 'POST', body: fd });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      status.textContent = 'Done.';
+      const s = d.summary;
+      document.getElementById('bt-summary').innerHTML = `
+        <div class="kpis">
+          <div><strong>${s.return_pct.toFixed(2)}%</strong><span>Return</span></div>
+          <div><strong>${s.alpha_pct.toFixed(2)}%</strong><span>Alpha vs SPY</span></div>
+          <div><strong>${(s.win_rate*100).toFixed(0)}%</strong><span>Win rate</span></div>
+          <div><strong>${s.trade_count}</strong><span>Trades</span></div>
+          <div><strong>$${s.start_equity.toFixed(0)}→$${s.end_equity.toFixed(0)}</strong><span>Equity</span></div>
+        </div>`;
+      const ctx = document.getElementById('bt-chart');
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: d.equity_curve.map(p => p.ts.slice(0,10)),
+                datasets: [{ label: 'Equity', data: d.equity_curve.map(p => p.equity),
+                             borderColor: '#3aa', tension: 0.2, fill: false }] },
+        options: { animation: false, plugins: { legend: { display: false } },
+                   scales: { y: { ticks: { color: '#aaa' } } } }
+      });
+      const tbody = document.querySelector('#bt-trades tbody');
+      tbody.innerHTML = d.trades.map(t => `
+        <tr class="${(t.pnl||0) > 0 ? 'win' : (t.pnl||0) < 0 ? 'loss' : ''}">
+          <td class="muted">${t.ts.slice(0,10)}</td>
+          <td><strong>${t.symbol}</strong></td>
+          <td><span class="badge ${t.side.toLowerCase()}">${t.side}</span></td>
+          <td>${t.qty.toFixed(4)}</td>
+          <td>$${t.price.toFixed(2)}</td>
+          <td>${t.pnl !== undefined ? '$'+t.pnl.toFixed(2) : '—'}</td>
+        </tr>`).join('');
+      resultDiv.style.display = 'block';
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+    }
+  });
+});
+</script>
+{% endblock %}

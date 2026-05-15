@@ -1,0 +1,12 @@
+<ul class="thoughts">
+  {% for t in thoughts %}
+  <li class="{{ 'declined' if not t.accepted else '' }}">
+    <span class="muted small">{{ t.ts[11:19] }}</span>
+    <span class="badge {{ (t.action or 'hold')|lower }}">{{ t.action or 'HOLD' }}</span>
+    <strong>{{ t.symbol or '—' }}</strong>
+    {% if t.confidence is not none %}<span class="muted small">conf {{ "%.2f"|format(t.confidence) }}</span>{% endif %}
+    <span>{{ t.reasoning[:240] }}</span>
+  </li>
+  {% endfor %}
+  {% if not thoughts %}<li class="muted">No AI thoughts yet — engine ticks every {{ 300 }}s by default.</li>{% endif %}
+</ul>

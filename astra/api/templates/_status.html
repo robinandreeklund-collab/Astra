@@ -1,0 +1,12 @@
+<span class="status-cluster">
+  {% if account %}
+    <span class="kv"><em>Equity</em><strong>${{ "%.0f"|format(equity) }}</strong></span>
+    <span class="kv"><em>Cash</em><strong>${{ "%.0f"|format(account.cash) }}</strong></span>
+    <span class="kv"><em>Pos</em><strong>{{ positions|length }}</strong></span>
+  {% endif %}
+  <span class="kv">
+    <em>Engine</em>
+    <strong class="{{ 'on' if engine_running else 'off' }}">{{ "▶ ON" if engine_running else "⏸ OFF" }}</strong>
+  </span>
+  {% if last_error %}<span class="kv err"><em>err</em><strong title="{{ last_error }}">!</strong></span>{% endif %}
+</span>

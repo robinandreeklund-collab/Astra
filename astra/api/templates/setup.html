@@ -1,0 +1,15 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Setup{% endblock %}
+{% block content %}
+<section class="card center">
+  <h1>Welcome to Astra</h1>
+  <p>Local AI paper trading. Set your starting balance to begin.</p>
+  <form method="post" action="/api/setup" onsubmit="setTimeout(() => location.reload(), 300)">
+    <label>Starting balance (USD)
+      <input type="number" name="starting_balance" min="100" step="100" value="100000" required />
+    </label>
+    <button type="submit" class="btn primary">Start</button>
+  </form>
+  <small class="muted">No real money is ever traded.</small>
+</section>
+{% endblock %}

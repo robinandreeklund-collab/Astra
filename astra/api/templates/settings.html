@@ -1,0 +1,66 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Settings{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Account</h2>
+  {% if account %}
+    <p><strong>Starting balance:</strong> ${{ "%.2f"|format(account.starting_balance) }}</p>
+    <p><strong>Cash:</strong> ${{ "%.2f"|format(account.cash) }}</p>
+    <p><strong>Mode:</strong> {{ account.mode }}</p>
+    <p><strong>Created:</strong> {{ account.created_at[:19] }}</p>
+  {% else %}
+    <p class="muted">No account.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Engine</h2>
+  <p>Status: <strong>{{ "RUNNING" if engine_running else "STOPPED" }}</strong></p>
+  <button class="btn" hx-post="/api/engine/start" hx-swap="none">Start</button>
+  <button class="btn" hx-post="/api/engine/stop" hx-swap="none">Stop</button>
+  <button class="btn" hx-post="/api/engine/tick" hx-swap="none">Force tick now</button>
+</section>
+
+<section class="card danger">
+  <h2>Reset</h2>
+  <p>Wipes portfolio, trades, equity, and AI thoughts. <strong>Strategy lessons + pattern stats are kept.</strong></p>
+  <form id="reset-form">
+    <label>New starting balance
+      <input type="number" name="starting_balance" min="100" step="100" value="{{ account.starting_balance if account else 100000 }}" required />
+    </label>
+    <button type="submit" class="btn danger">Reset (keep memory)</button>
+  </form>
+  <p class="muted small" id="reset-status"></p>
+</section>
+
+<section class="card">
+  <h2>Configuration (read-only)</h2>
+  <pre class="small">
+LM Studio URL:    {{ settings.lm_studio_url }}
+LM Studio model:  {{ settings.lm_studio_model }}
+Tick seconds:     {{ settings.tick_seconds }}
+Watchlist size:   {{ settings.watchlist_size }}
+Max position %:   {{ settings.max_position_pct }}
+Daily loss cap %: {{ settings.daily_loss_limit_pct }}
+Fee per trade:    ${{ settings.fee_per_trade }}
+Slippage bps:     {{ settings.slippage_bps }}
+Finnhub key set:  {{ "yes" if settings.finnhub_api_key else "NO" }}
+  </pre>
+</section>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const f = document.getElementById('reset-form');
+  if (!f) return;
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!confirm('Wipe portfolio? Strategy memory will be kept.')) return;
+    const fd = new FormData(f);
+    const r = await fetch('/api/reset', { method: 'POST', body: fd });
+    const d = await r.json();
+    document.getElementById('reset-status').textContent = r.ok ? 'Reset complete.' : ('Error: ' + JSON.stringify(d));
+    if (r.ok) setTimeout(() => location.href = '/', 700);
+  });
+});
+</script>
+{% endblock %}

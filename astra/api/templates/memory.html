@@ -1,0 +1,61 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Memory{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Generations</h2>
+  <table class="table">
+    <thead><tr><th>#</th><th>Started</th><th>Reset</th><th>Start $</th><th>End $</th><th>Trades</th><th>Notes</th></tr></thead>
+    <tbody>
+      {% for g in generations %}
+      <tr>
+        <td>{{ g.id }}</td>
+        <td class="muted">{{ g.started_at[:19] }}</td>
+        <td class="muted">{{ (g.reset_at or '—')[:19] }}</td>
+        <td>${{ "%.0f"|format(g.starting_balance or 0) }}</td>
+        <td>{% if g.ending_equity %}${{ "%.0f"|format(g.ending_equity) }}{% else %}—{% endif %}</td>
+        <td>{{ g.trade_count or 0 }}</td>
+        <td class="muted small">{{ g.notes or '' }}</td>
+      </tr>
+      {% endfor %}
+      {% if not generations %}<tr><td colspan="7" class="muted center">No generations.</td></tr>{% endif %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Strategy lessons (survives reset)</h2>
+  <ul class="lessons">
+    {% for l in lessons %}
+    <li>
+      <span class="muted small">gen {{ l.generation }} · score {{ "%.2f"|format(l.score) }}</span>
+      <div>{{ l.lesson }}</div>
+    </li>
+    {% endfor %}
+    {% if not lessons %}<li class="muted">No lessons yet — run /api/engine/reflect after some trades.</li>{% endif %}
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Pattern statistics</h2>
+  <table class="table">
+    <thead>
+      <tr><th>Pattern</th><th>W</th><th>L</th><th>Win rate</th><th>Total PnL</th><th>Avg hold</th><th>Confidence</th></tr>
+    </thead>
+    <tbody>
+      {% for p in patterns %}
+        {% set n = p.wins + p.losses %}
+      <tr>
+        <td class="small">{{ p.pattern_desc }}</td>
+        <td>{{ p.wins }}</td>
+        <td>{{ p.losses }}</td>
+        <td>{% if n > 0 %}{{ "%.0f"|format(100*p.wins/n) }}%{% else %}—{% endif %}</td>
+        <td>${{ "%.2f"|format(p.total_pnl) }}</td>
+        <td>{{ "%.0f"|format(p.avg_hold_minutes or 0) }}m</td>
+        <td>{{ "%.2f"|format(p.confidence) }}</td>
+      </tr>
+      {% endfor %}
+      {% if not patterns %}<tr><td colspan="7" class="muted center">No pattern data yet.</td></tr>{% endif %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

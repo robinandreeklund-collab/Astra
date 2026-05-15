@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'if [ ! -d .venv ]; then uv venv --python 3.11 .venv >/dev/null 2>&1 && uv pip install --python .venv/bin/python -e \".[dev]\" >/dev/null 2>&1; fi; echo \"Astra env ready. Run tests: .venv/bin/python -m pytest -q\"'"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python:*)",
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(uv:*)",
+      "Bash(python3:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(rm -rf data*)",
+      "Bash(rm -rf /tmp/astra*)"
+    ]
+  }
+}

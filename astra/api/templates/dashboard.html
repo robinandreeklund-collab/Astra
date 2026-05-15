@@ -1,0 +1,66 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Dashboard{% endblock %}
+{% block content %}
+<section class="grid-2">
+  <div class="card">
+    <h2>Equity</h2>
+    <canvas id="equity-chart" height="120"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Positions
+      <button class="btn small" hx-post="/api/engine/tick" hx-swap="none">Force tick</button>
+      <button class="btn small" hx-post="/api/engine/reflect" hx-swap="none">Reflect now</button>
+    </h2>
+    <div id="positions"
+         hx-get="/api/positions"
+         hx-trigger="load, every 10s, sse:trade"
+         hx-swap="innerHTML">…</div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>AI thoughts (live)</h2>
+  <div id="thoughts"
+       hx-get="/api/thoughts"
+       hx-trigger="load, every 8s, sse:thought"
+       hx-swap="innerHTML">…</div>
+</section>
+
+<section class="card">
+  <h2>Recent trades</h2>
+  <div id="recent-trades"
+       hx-get="/api/trades-table"
+       hx-trigger="load, every 15s, sse:trade"
+       hx-swap="innerHTML">…</div>
+</section>
+
+<script>
+window.__astra_init = function () {
+  const ctx = document.getElementById('equity-chart');
+  if (!ctx) return;
+  const chart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: [{ label: 'Equity ($)', data: [], borderColor: '#3aa', tension: 0.2, fill: false }] },
+    options: { responsive: true, animation: false, plugins: { legend: { display: false } },
+               scales: { x: { display: false }, y: { ticks: { color: '#aaa' } } } }
+  });
+  async function refresh() {
+    try {
+      const r = await fetch('/api/equity?limit=500');
+      const d = await r.json();
+      chart.data.labels = d.points.map(p => p.ts);
+      chart.data.datasets[0].data = d.points.map(p => p.equity);
+      chart.update('none');
+    } catch (e) {}
+  }
+  refresh();
+  setInterval(refresh, 10000);
+  if (window.EventSource) {
+    const es = new EventSource('/sse/events');
+    es.addEventListener('equity', refresh);
+    es.addEventListener('trade', refresh);
+  }
+};
+</script>
+{% endblock %}

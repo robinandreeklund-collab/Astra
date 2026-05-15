@@ -1,14 +1,49 @@
-<table class="table">
-  <thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Opened</th></tr></thead>
+<div class="pos-summary">
+  <span class="kv">
+    <em>Holdings value</em>
+    <strong>${{ "%.2f"|format(total_value) }}</strong>
+  </span>
+  <span class="kv">
+    <em>Cost basis</em>
+    <strong>${{ "%.2f"|format(total_cost) }}</strong>
+  </span>
+  <span class="kv {{ 'pnl-pos' if total_pnl > 0 else ('pnl-neg' if total_pnl < 0 else '') }}">
+    <em>Unrealized P&amp;L</em>
+    <strong>{{ "+" if total_pnl >= 0 else "" }}${{ "%.2f"|format(total_pnl) }}
+      ({{ "+" if total_pnl_pct >= 0 else "" }}{{ "%.2f"|format(total_pnl_pct*100) }}%)
+    </strong>
+  </span>
+</div>
+
+<table class="table positions-table">
+  <thead>
+    <tr>
+      <th>Symbol</th>
+      <th>Qty</th>
+      <th>Avg cost</th>
+      <th>Last price</th>
+      <th>Market value</th>
+      <th>P&amp;L</th>
+      <th>P&amp;L %</th>
+      <th>Opened</th>
+    </tr>
+  </thead>
   <tbody>
   {% for p in positions %}
-    <tr>
+    <tr class="{{ 'pnl-pos' if p.pnl > 0 else ('pnl-neg' if p.pnl < 0 else '') }}">
       <td><strong>{{ p.symbol }}</strong></td>
       <td>{{ "%.4f"|format(p.qty) }}</td>
       <td>${{ "%.2f"|format(p.avg_price) }}</td>
+      <td>
+        ${{ "%.2f"|format(p.last_price) }}
+        {% if not p.has_live_price %}<span class="muted small" title="No tick yet — using avg cost as proxy">·</span>{% endif %}
+      </td>
+      <td>${{ "%.2f"|format(p.market_value) }}</td>
+      <td><strong>{{ "+" if p.pnl >= 0 else "" }}${{ "%.2f"|format(p.pnl) }}</strong></td>
+      <td><strong>{{ "+" if p.pnl_pct >= 0 else "" }}{{ "%.2f"|format(p.pnl_pct*100) }}%</strong></td>
       <td class="muted small">{{ p.opened_at[:19] }}</td>
     </tr>
   {% endfor %}
-  {% if not positions %}<tr><td colspan="4" class="muted center">No open positions.</td></tr>{% endif %}
+  {% if not positions %}<tr><td colspan="8" class="muted center">No open positions.</td></tr>{% endif %}
   </tbody>
 </table>

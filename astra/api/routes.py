@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Form, HTTPException, Request
@@ -179,8 +180,72 @@ def build_router(app: FastAPI) -> APIRouter:
     @r.get("/api/positions", response_class=HTMLResponse)
     async def positions_fragment(request: Request):
         positions = await portfolio.get_positions()
+        prices = state.last_prices
+        enriched: list[dict[str, Any]] = []
+        total_value = 0.0
+        total_cost = 0.0
+        for p in positions:
+            last = float(prices.get(p["symbol"]) or p["avg_price"])
+            qty = float(p["qty"])
+            avg = float(p["avg_price"])
+            value = qty * last
+            cost = qty * avg
+            pnl = value - cost
+            pnl_pct = (pnl / cost) if cost > 0 else 0.0
+            enriched.append({
+                **p,
+                "last_price": last,
+                "market_value": value,
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+                "has_live_price": p["symbol"] in prices,
+            })
+            total_value += value
+            total_cost += cost
         return templates.TemplateResponse(
-            request, "_positions.html", {"positions": positions}
+            request, "_positions.html",
+            {
+                "positions": enriched,
+                "total_value": total_value,
+                "total_cost": total_cost,
+                "total_pnl": total_value - total_cost,
+                "total_pnl_pct": ((total_value - total_cost) / total_cost) if total_cost > 0 else 0.0,
+            },
+        )
+
+    @r.get("/api/summary", response_class=HTMLResponse)
+    async def summary_fragment(request: Request):
+        acc = await portfolio.get_account()
+        positions = await portfolio.get_positions()
+        prices = state.last_prices
+        market_value = sum(
+            float(p["qty"]) * float(prices.get(p["symbol"]) or p["avg_price"])
+            for p in positions
+        )
+        cost_basis = sum(float(p["qty"]) * float(p["avg_price"]) for p in positions)
+        cash = float(acc["cash"]) if acc else 0.0
+        equity = cash + market_value
+        start = float(acc["starting_balance"]) if acc else 0.0
+        # Today's change: oldest equity point with today's ISO date prefix
+        hist = await portfolio.equity_history(limit=2000)
+        today = datetime.now(timezone.utc).date().isoformat() if hist else ""
+        today_points = [h for h in hist if h["ts"].startswith(today)] if hist else []
+        day_open = today_points[0]["equity"] if today_points else (hist[0]["equity"] if hist else equity)
+        return templates.TemplateResponse(
+            request, "_summary.html",
+            {
+                "equity": equity,
+                "cash": cash,
+                "market_value": market_value,
+                "starting_balance": start,
+                "total_pnl": equity - start,
+                "total_pnl_pct": ((equity - start) / start) if start > 0 else 0.0,
+                "unrealized": market_value - cost_basis,
+                "unrealized_pct": ((market_value - cost_basis) / cost_basis) if cost_basis > 0 else 0.0,
+                "day_change": equity - day_open,
+                "day_change_pct": ((equity - day_open) / day_open) if day_open > 0 else 0.0,
+                "position_count": len(positions),
+            },
         )
 
     @r.get("/api/thoughts", response_class=HTMLResponse)

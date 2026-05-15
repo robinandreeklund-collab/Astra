@@ -41,6 +41,9 @@ class EngineState:
         self.last_tick: float | None = None
         self.last_error: str | None = None
         self.tick_count: int = 0
+        # Cache last seen prices by symbol so the UI can show live P&L
+        # without re-fetching per request. Updated at the end of each tick.
+        self.last_prices: dict[str, float] = {}
         self.subscribers: list[asyncio.Queue[TickEvent]] = []
 
     async def broadcast(self, evt: TickEvent) -> None:
@@ -234,6 +237,10 @@ class TradingEngine:
             mtm_prices.update(prices)
             equity, cash = await broker.mark_to_market(mtm_prices)
             await self.portfolio.append_equity(equity, cash)
+
+            # Cache prices on engine state so the UI can show live P&L
+            # without each request re-hitting the data APIs.
+            self.state.last_prices.update(mtm_prices)
             await self.state.broadcast(TickEvent("equity", {"equity": equity, "cash": cash}))
 
         self.state.last_tick = time.time()

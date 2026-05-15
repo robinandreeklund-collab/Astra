@@ -93,3 +93,31 @@ input[type=number], input[type=text] { background: var(--bg); color: var(--text)
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 10px; overflow-x: auto; }
 form { margin: 12px 0; display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
 form button { align-self: flex-start; }
+
+/* Summary cards row */
+.summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px; margin-bottom: 16px; }
+.summary-cards .sc { background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.summary-cards .sc em { color: var(--muted); font-style: normal; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.5px; }
+.summary-cards .sc strong { font-size: 22px; color: var(--text); }
+.summary-cards .sc.pnl-pos { border-color: #1f4a23; }
+.summary-cards .sc.pnl-pos strong { color: #6e6; }
+.summary-cards .sc.pnl-neg { border-color: #4a1f1f; }
+.summary-cards .sc.pnl-neg strong { color: #f88; }
+
+/* Positions summary above the table */
+.pos-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.pos-summary .kv { flex-direction: column; align-items: flex-start; }
+.pos-summary .kv em { font-size: 10px; }
+.pos-summary .kv strong { font-size: 14px; }
+.pos-summary .kv.pnl-pos strong { color: #6e6; }
+.pos-summary .kv.pnl-neg strong { color: #f88; }
+
+/* Per-position row coloring */
+.positions-table tr.pnl-pos td:nth-child(6),
+.positions-table tr.pnl-pos td:nth-child(7) { color: #6e6; }
+.positions-table tr.pnl-neg td:nth-child(6),
+.positions-table tr.pnl-neg td:nth-child(7) { color: #f88; }

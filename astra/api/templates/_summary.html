@@ -1,0 +1,25 @@
+<div class="summary-cards">
+  <div class="sc">
+    <em>Equity</em>
+    <strong>${{ "%.2f"|format(equity) }}</strong>
+    <span class="muted small">cash ${{ "%.0f"|format(cash) }} + holdings ${{ "%.0f"|format(market_value) }}</span>
+  </div>
+
+  <div class="sc {{ 'pnl-pos' if total_pnl > 0 else ('pnl-neg' if total_pnl < 0 else '') }}">
+    <em>Total P&amp;L</em>
+    <strong>{{ "+" if total_pnl >= 0 else "" }}${{ "%.2f"|format(total_pnl) }}</strong>
+    <span class="muted small">{{ "+" if total_pnl_pct >= 0 else "" }}{{ "%.2f"|format(total_pnl_pct*100) }}% from ${{ "%.0f"|format(starting_balance) }}</span>
+  </div>
+
+  <div class="sc {{ 'pnl-pos' if day_change > 0 else ('pnl-neg' if day_change < 0 else '') }}">
+    <em>Today</em>
+    <strong>{{ "+" if day_change >= 0 else "" }}${{ "%.2f"|format(day_change) }}</strong>
+    <span class="muted small">{{ "+" if day_change_pct >= 0 else "" }}{{ "%.2f"|format(day_change_pct*100) }}%</span>
+  </div>
+
+  <div class="sc {{ 'pnl-pos' if unrealized > 0 else ('pnl-neg' if unrealized < 0 else '') }}">
+    <em>Unrealized</em>
+    <strong>{{ "+" if unrealized >= 0 else "" }}${{ "%.2f"|format(unrealized) }}</strong>
+    <span class="muted small">across {{ position_count }} position{% if position_count != 1 %}s{% endif %}</span>
+  </div>
+</div>

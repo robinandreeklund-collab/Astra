@@ -1,6 +1,11 @@
 {% extends "_base.html" %}
 {% block title %}Astra — Dashboard{% endblock %}
 {% block content %}
+<section id="summary"
+         hx-get="/api/summary"
+         hx-trigger="load, every 8s, sse:trade from:body, sse:equity from:body"
+         hx-swap="innerHTML">…</section>
+
 <section class="grid-2">
   <div class="card">
     <h2>Equity</h2>

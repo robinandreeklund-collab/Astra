@@ -248,6 +248,13 @@ def build_router(app: FastAPI) -> APIRouter:
             },
         )
 
+    @r.get("/api/scan", response_class=HTMLResponse)
+    async def scan_fragment(request: Request):
+        scan = state.last_scan or {}
+        return templates.TemplateResponse(
+            request, "_scan.html", {"scan": scan}
+        )
+
     @r.get("/api/thoughts", response_class=HTMLResponse)
     async def thoughts_fragment(request: Request):
         thoughts = await portfolio.recent_thoughts(limit=30)

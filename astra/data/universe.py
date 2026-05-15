@@ -20,9 +20,13 @@ FALLBACK_SP500: list[str] = [
     "TXN", "DIS", "NOW", "VZ", "INTU", "CAT", "QCOM", "PFE", "AMGN", "IBM",
     "GS", "MS", "AXP", "PM", "T", "RTX", "NEE", "BLK", "HON", "SPGI", "LOW",
     "ELV", "BKNG", "AMAT", "BA", "C", "PLD", "DE", "SCHW", "GILD", "ADI",
-    "MDT", "TJX", "VRTX", "SBUX", "MMC", "REGN", "ETN", "ISRG", "ADP", "BMY",
-    "PANW", "KLAC", "LRCX", "MU", "SYK", "CB", "PGR", "ZTS", "BX", "FI",
+    "MDT", "TJX", "VRTX", "SBUX", "REGN", "ETN", "ISRG", "ADP", "BMY",
+    "PANW", "KLAC", "LRCX", "MU", "SYK", "CB", "PGR", "ZTS", "BX",
     "MO", "BSX", "DUK", "SO", "USB", "EQIX", "CI", "CSX", "ICE", "CL",
+    # Tech / growth that user likely wants visible by default
+    "ARM", "PLTR", "COIN", "SMCI", "MRVL", "ANET", "CRWD", "SNOW", "DDOG",
+    "NET", "TEAM", "WDAY", "FTNT", "INTC", "ASML", "TSM", "UBER", "ABNB",
+    "SHOP", "MDB", "DASH", "RIVN", "LCID", "NIO", "BABA", "JD",
 ]
 
 

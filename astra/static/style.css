@@ -108,6 +108,13 @@ form button { align-self: flex-start; }
 .summary-cards .sc.pnl-neg { border-color: #4a1f1f; }
 .summary-cards .sc.pnl-neg strong { color: #f88; }
 
+/* Universe scan header */
+.scan-header { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.scan-header .kv { flex-direction: column; align-items: flex-start; }
+.scan-header .kv em { font-size: 10px; }
+.scan-header .kv strong { font-size: 16px; color: var(--accent-2); }
+
 /* Positions summary above the table */
 .pos-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;
   padding-bottom: 8px; border-bottom: 1px solid var(--border); }

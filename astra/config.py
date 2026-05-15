@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     # S&P 500 universe.
     custom_watchlist: str = Field(default="", alias="ASTRA_CUSTOM_WATCHLIST")
 
+    # Universe scanner: when enabled, every tick scans the FULL S&P 500 using
+    # cached yfinance candles only, ranks by signal strength + momentum, and
+    # deep-dives (Finnhub + LLM) only on the top `scan_top_n` plus held
+    # positions and custom priority tickers. Lets the bot effectively watch
+    # the entire universe without hitting Finnhub free-tier rate limits.
+    scan_universe: bool = Field(default=True, alias="ASTRA_SCAN_UNIVERSE")
+    scan_top_n: int = Field(default=30, alias="ASTRA_SCAN_TOP_N")
+
     data_dir: Path = Field(default=Path("./data"), alias="ASTRA_DATA_DIR")
 
     @property

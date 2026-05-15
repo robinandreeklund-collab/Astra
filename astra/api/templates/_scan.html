@@ -1,0 +1,23 @@
+{% if scan and scan.universe_size %}
+<div class="scan-header">
+  <span class="kv"><em>Universe</em><strong>{{ scan.universe_size }}</strong></span>
+  <span class="kv"><em>Scored</em><strong>{{ scan.scanned }}</strong></span>
+  <span class="kv"><em>Deep-dive</em><strong>{{ scan.deep_dive }}</strong></span>
+</div>
+<table class="table">
+  <thead><tr><th>Rank</th><th>Symbol</th><th>Score</th><th>Bull</th><th>Bear</th></tr></thead>
+  <tbody>
+  {% for c in scan.top_candidates %}
+    <tr>
+      <td class="muted">{{ loop.index }}</td>
+      <td><strong>{{ c.symbol }}</strong></td>
+      <td>{{ "%.2f"|format(c.score) }}</td>
+      <td>{{ c.bull }}</td>
+      <td>{{ c.bear }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted small">No scan yet — waiting for the first tick. Scanning the whole S&P 500 cold-starts the cache, so the first tick may take ~30s on a fresh install.</p>
+{% endif %}

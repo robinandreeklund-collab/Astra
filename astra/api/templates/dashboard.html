@@ -35,6 +35,16 @@
 </section>
 
 <section class="card">
+  <h2>Universe scan (last tick)
+    <span class="muted small">— top candidates by signal strength + momentum</span>
+  </h2>
+  <div id="scan"
+       hx-get="/api/scan"
+       hx-trigger="load, every 15s, sse:equity from:body"
+       hx-swap="innerHTML">…</div>
+</section>
+
+<section class="card">
   <h2>Recent trades</h2>
   <div id="recent-trades"
        hx-get="/api/trades-table"

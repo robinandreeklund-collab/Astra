@@ -47,6 +47,10 @@ class EngineState:
         # Per-symbol short signal history (most recent first). Used to compute
         # tick-over-tick deltas for the LLM prompt.
         self.signal_history: dict[str, list[dict[str, Any]]] = {}
+        # Stats from the latest universe scan (how many symbols, which top
+        # candidates) — shown on the dashboard so the user can see what the
+        # bot considered, not just what it traded.
+        self.last_scan: dict[str, Any] = {}
         self.subscribers: list[asyncio.Queue[TickEvent]] = []
 
     def push_signal(self, symbol: str, snapshot: dict[str, Any], keep: int = 3) -> None:
@@ -110,12 +114,52 @@ class TradingEngine:
         return watchlist_from_universe(u, settings.watchlist_size, priority=priority)
 
     async def tick(self) -> dict[str, Any]:
-        """Run one decision cycle across the watchlist."""
+        """Run one decision cycle.
+
+        When ASTRA_SCAN_UNIVERSE=true (the default), every tick:
+          1. Scans the full S&P 500 with cached yfinance candles + TA.
+          2. Picks the top `scan_top_n` symbols by signal strength + momentum.
+          3. Always includes held positions + custom-watchlist priorities.
+          4. Deep-dives (Finnhub + LLM) only on that union.
+
+        When scan is off, falls back to the static watchlist behaviour.
+        """
         acc = await self.portfolio.get_account()
         if not acc:
             return {"skipped": True, "reason": "no account"}
 
-        watch = await self.watchlist()
+        from astra.data.universe import parse_custom_watchlist
+        priority = parse_custom_watchlist(settings.custom_watchlist)
+
+        # Build the deep-dive symbol list
+        held = {p["symbol"] for p in await self.portfolio.get_positions()}
+        universe = await self.ensure_universe()
+
+        if settings.scan_universe and universe:
+            from astra.engine.scanner import scan_universe
+            # Pass the prior snapshots so the scanner can weight momentum.
+            priors = {sym: hist[0] for sym, hist in self.state.signal_history.items() if hist}
+            scored = await scan_universe(
+                universe, self.cache, settings.scan_top_n, priors=priors
+            )
+            top_candidates = [s["symbol"] for s in scored]
+            symbols = list(dict.fromkeys(list(held) + priority + top_candidates))
+            self.state.last_scan = {
+                "universe_size": len(universe),
+                "scanned": len(scored),
+                "deep_dive": len(symbols),
+                "top_candidates": [
+                    {"symbol": s["symbol"], "score": round(s["score"], 2),
+                     "bull": s["bull"], "bear": s["bear"]}
+                    for s in scored[:10]
+                ],
+            }
+        else:
+            watch = await self.watchlist()
+            symbols = list(dict.fromkeys(list(held) + watch))[
+                : settings.watchlist_size + len(held)
+            ]
+
         async with FinnhubClient(cache=self.cache) as fc:
             agg = SignalAggregator(fc)
 
@@ -129,10 +173,6 @@ class TradingEngine:
             risk = RiskManager(self.portfolio)
             retriever = MemoryRetriever(self.memory)
             recorder = MemoryRecorder(self.portfolio, self.memory)
-
-            # Always evaluate held positions, plus top of watchlist
-            held = {p["symbol"] for p in await self.portfolio.get_positions()}
-            symbols: list[str] = list(dict.fromkeys(list(held) + watch))[: settings.watchlist_size + len(held)]
 
             actions: list[dict[str, Any]] = []
             prices: dict[str, float] = {}

@@ -14,8 +14,8 @@ build/
 .env
 .env.local
 
-# Local data
-data/
+# Local data dir (root only — don't accidentally ignore astra/data package)
+/data/
 *.db
 *.db-shm
 *.db-wal

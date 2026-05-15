@@ -1,26 +1,41 @@
-"""Yahoo Finance daily candles via yfinance.
+"""Yahoo Finance daily candles via yfinance, cached on disk.
 
-Used as the primary candle source because Finnhub's /stock/candle endpoint
-is no longer on the free tier. yfinance scrapes Yahoo and is rate-limited
-client-side; we call it from a thread pool so we don't block the event loop.
+Used as the historical-candle source because Finnhub's /stock/candle endpoint
+is no longer on the free tier. yfinance scrapes Yahoo (slow + rate-limited
+client-side) so we cache aggressively: daily bars only change once per day,
+and we serve up to `MAX_CACHE_SECONDS` from SQLite without hitting Yahoo at
+all.
+
+The optional `cache` parameter is a CacheDB; if given, results are persisted
+across process restarts. A small in-memory layer covers within-process repeat
+calls.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import pandas as pd
 import yfinance as yf
 
+from astra.db.cache import CacheDB
+
 log = logging.getLogger(__name__)
+
+# Daily candles don't change intraday — cache for a few hours so the engine
+# tick loop doesn't re-fetch every cycle.
+MAX_CACHE_SECONDS = 4 * 60 * 60
+
+# Per-process in-memory cache (avoids touching SQLite on hot path).
+_MEM_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
 
 def _fetch_sync(symbol: str, period: str) -> list[dict[str, Any]]:
     """Blocking yfinance fetch, executed in a worker thread."""
     try:
-        # auto_adjust=False keeps raw OHLC; progress=False silences yfinance
         ticker = yf.Ticker(symbol)
         df: pd.DataFrame = ticker.history(period=period, interval="1d", auto_adjust=False)
         if df is None or df.empty:
@@ -47,26 +62,54 @@ def _fetch_sync(symbol: str, period: str) -> list[dict[str, Any]]:
         return []
 
 
-async def fetch_daily_candles(symbol: str, days: int = 180) -> list[dict[str, Any]]:
-    """Async wrapper that returns daily candles for ~`days` days back."""
+def _period_for(days: int) -> str:
     if days <= 30:
-        period = "1mo"
-    elif days <= 90:
-        period = "3mo"
-    elif days <= 180:
-        period = "6mo"
-    elif days <= 365:
-        period = "1y"
-    elif days <= 730:
-        period = "2y"
-    else:
-        period = "5y"
+        return "1mo"
+    if days <= 90:
+        return "3mo"
+    if days <= 180:
+        return "6mo"
+    if days <= 365:
+        return "1y"
+    if days <= 730:
+        return "2y"
+    return "5y"
+
+
+async def fetch_daily_candles(
+    symbol: str,
+    days: int = 180,
+    cache: CacheDB | None = None,
+) -> list[dict[str, Any]]:
+    """Return daily candles for ~`days` back, served from cache when possible."""
     sym = symbol.replace(".", "-")  # BRK.B -> BRK-B for yfinance
-    return await asyncio.to_thread(_fetch_sync, sym, period)
+    period = _period_for(days)
+    cache_key = f"yf:{sym}:{period}"
+
+    # In-memory hot cache
+    hit = _MEM_CACHE.get(cache_key)
+    now = time.time()
+    if hit and now - hit[0] < MAX_CACHE_SECONDS:
+        return hit[1]
+
+    # Persistent disk cache
+    if cache is not None:
+        disk = await cache.get(cache_key)
+        if disk and isinstance(disk, list) and disk:
+            _MEM_CACHE[cache_key] = (now, disk)
+            return disk
+
+    rows = await asyncio.to_thread(_fetch_sync, sym, period)
+    if rows:
+        _MEM_CACHE[cache_key] = (now, rows)
+        if cache is not None:
+            await cache.set(cache_key, rows, ttl_seconds=MAX_CACHE_SECONDS)
+            await cache.store_candles(sym, "D", rows)
+    return rows
 
 
-async def fetch_last_close(symbol: str) -> float | None:
-    rows = await fetch_daily_candles(symbol, days=10)
+async def fetch_last_close(symbol: str, cache: CacheDB | None = None) -> float | None:
+    rows = await fetch_daily_candles(symbol, days=30, cache=cache)
     if not rows:
         return None
     return float(rows[-1]["c"])

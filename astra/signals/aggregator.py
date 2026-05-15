@@ -78,8 +78,9 @@ class SignalBundle:
 
 
 class SignalAggregator:
-    def __init__(self, client: FinnhubClient) -> None:
+    def __init__(self, client: FinnhubClient, cache=None) -> None:
         self.client = client
+        self.cache = cache if cache is not None else getattr(client, "cache", None)
 
     async def fetch(self, symbol: str) -> SignalBundle:
         b = SignalBundle(symbol=symbol, fetched_at=time.time())
@@ -93,10 +94,10 @@ class SignalAggregator:
                 b.errors.append(f"quote:{e}")
 
         async def _tech() -> None:
-            # Primary source: yfinance (free, daily candles). Finnhub free tier
+            # Primary source: yfinance with disk cache. Finnhub free tier
             # no longer includes /stock/candle.
             try:
-                rows = await fetch_daily_candles(symbol, days=180)
+                rows = await fetch_daily_candles(symbol, days=180, cache=self.cache)
                 if rows:
                     b.technical = technical.compute_indicators(rows)
                 else:

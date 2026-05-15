@@ -15,10 +15,25 @@
 
 <section class="card">
   <h2>Engine</h2>
-  <p>Status: <strong>{{ "RUNNING" if engine_running else "STOPPED" }}</strong></p>
+  <p>Status: <strong>{{ "RUNNING" if engine_running else "STOPPED" }}</strong>
+     · Tick every <strong>{{ settings.tick_seconds }}s</strong></p>
   <button class="btn" hx-post="/api/engine/start" hx-swap="none">Start</button>
   <button class="btn" hx-post="/api/engine/stop" hx-swap="none">Stop</button>
   <button class="btn" hx-post="/api/engine/tick" hx-swap="none">Force tick now</button>
+
+  <h3 style="margin-top:14px;">Tick interval</h3>
+  <p class="muted small">Lower = more frequent updates &amp; more API calls.
+     Change applies immediately (no restart).</p>
+  <div class="row">
+    <button class="btn small" onclick="setTick(15)">15s (demo)</button>
+    <button class="btn small" onclick="setTick(60)">60s</button>
+    <button class="btn small" onclick="setTick(300)">5 min</button>
+    <button class="btn small" onclick="setTick(900)">15 min</button>
+    <input type="number" id="tick-custom" min="5" max="3600" placeholder="custom s"
+           style="width:110px;" />
+    <button class="btn small" onclick="setTick(parseInt(document.getElementById('tick-custom').value,10))">Apply</button>
+    <span class="muted small" id="tick-status"></span>
+  </div>
 </section>
 
 <section class="card danger">
@@ -62,5 +77,28 @@ document.addEventListener('DOMContentLoaded', () => {
     if (r.ok) setTimeout(() => location.href = '/', 700);
   });
 });
+
+async function setTick(seconds) {
+  const status = document.getElementById('tick-status');
+  if (!Number.isFinite(seconds) || seconds < 5) {
+    status.textContent = 'Invalid (must be ≥ 5s)';
+    return;
+  }
+  status.textContent = 'Applying…';
+  const fd = new FormData();
+  fd.append('seconds', seconds);
+  try {
+    const r = await fetch('/api/engine/tick-interval', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (r.ok) {
+      status.textContent = `Set to ${d.tick_seconds}s.`;
+      setTimeout(() => location.reload(), 600);
+    } else {
+      status.textContent = 'Error: ' + JSON.stringify(d);
+    }
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+  }
+}
 </script>
 {% endblock %}

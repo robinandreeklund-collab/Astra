@@ -14,16 +14,18 @@
     </h2>
     <div id="positions"
          hx-get="/api/positions"
-         hx-trigger="load, every 10s, sse:trade"
+         hx-trigger="load, every 10s, sse:trade from:body"
          hx-swap="innerHTML">…</div>
   </div>
 </section>
 
 <section class="card">
-  <h2>AI thoughts (live)</h2>
+  <h2>AI thoughts (live)
+    <span class="muted small" id="thought-count"></span>
+  </h2>
   <div id="thoughts"
        hx-get="/api/thoughts"
-       hx-trigger="load, every 8s, sse:thought"
+       hx-trigger="load, every 6s, sse:thought from:body"
        hx-swap="innerHTML">…</div>
 </section>
 
@@ -31,21 +33,25 @@
   <h2>Recent trades</h2>
   <div id="recent-trades"
        hx-get="/api/trades-table"
-       hx-trigger="load, every 15s, sse:trade"
+       hx-trigger="load, every 12s, sse:trade from:body"
        hx-swap="innerHTML">…</div>
 </section>
 
 <script>
 window.__astra_init = function () {
+  // ---- Equity chart ----
   const ctx = document.getElementById('equity-chart');
-  if (!ctx) return;
-  const chart = new Chart(ctx, {
-    type: 'line',
-    data: { labels: [], datasets: [{ label: 'Equity ($)', data: [], borderColor: '#3aa', tension: 0.2, fill: false }] },
-    options: { responsive: true, animation: false, plugins: { legend: { display: false } },
-               scales: { x: { display: false }, y: { ticks: { color: '#aaa' } } } }
-  });
-  async function refresh() {
+  let chart = null;
+  if (ctx) {
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'Equity ($)', data: [], borderColor: '#3aa', tension: 0.2, fill: false, pointRadius: 0 }] },
+      options: { responsive: true, animation: false, plugins: { legend: { display: false } },
+                 scales: { x: { display: false }, y: { ticks: { color: '#aaa' } } } }
+    });
+  }
+  async function refreshEquity() {
+    if (!chart) return;
     try {
       const r = await fetch('/api/equity?limit=500');
       const d = await r.json();
@@ -54,13 +60,58 @@ window.__astra_init = function () {
       chart.update('none');
     } catch (e) {}
   }
-  refresh();
-  setInterval(refresh, 10000);
+  refreshEquity();
+  setInterval(refreshEquity, 15000);
+
+  // ---- Listen to SSE for live refreshes that HTMX can't do (chart) ----
+  // HTMX has its own SSE connection via sse-connect on <body>; we also listen
+  // here independently so the chart can refresh without HTML swaps.
   if (window.EventSource) {
     const es = new EventSource('/sse/events');
-    es.addEventListener('equity', refresh);
-    es.addEventListener('trade', refresh);
+    es.addEventListener('equity', refreshEquity);
+    es.addEventListener('trade', refreshEquity);
+    es.addEventListener('thought', (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        const el = document.getElementById('thought-count');
+        if (el) {
+          el.textContent = `· last: ${d.symbol} ${d.action} (${(d.confidence||0).toFixed(2)})`;
+        }
+      } catch (_) {}
+    });
+    es.addEventListener('error', () => {
+      // Browser will reconnect automatically — no need to do anything.
+    });
   }
+
+  // ---- Next-tick countdown ----
+  // The status pill is re-rendered server-side every 5s with data attrs
+  // (last_tick + tick_seconds); we update a relative countdown each second.
+  function updateCountdown() {
+    const pill = document.querySelector('#status-pill .status-cluster');
+    const out = document.getElementById('next-tick');
+    if (!pill || !out) return;
+    const lastTick = parseFloat(pill.dataset.lastTick);
+    const tickSec = parseInt(pill.dataset.tickSeconds, 10) || 300;
+    if (!lastTick || isNaN(lastTick)) {
+      out.textContent = 'soon';
+      return;
+    }
+    const now = Date.now() / 1000;
+    const elapsed = now - lastTick;
+    const remaining = Math.max(0, tickSec - elapsed);
+    if (remaining < 1) {
+      out.textContent = 'now…';
+    } else if (remaining < 60) {
+      out.textContent = `${Math.round(remaining)}s`;
+    } else {
+      const m = Math.floor(remaining / 60);
+      const s = Math.round(remaining % 60);
+      out.textContent = `${m}m ${s}s`;
+    }
+  }
+  setInterval(updateCountdown, 1000);
+  updateCountdown();
 };
 </script>
 {% endblock %}

@@ -1,4 +1,6 @@
-<span class="status-cluster">
+<span class="status-cluster"
+      data-last-tick="{{ last_tick or '' }}"
+      data-tick-seconds="{{ tick_seconds }}">
   {% if account %}
     <span class="kv"><em>Equity</em><strong>${{ "%.0f"|format(equity) }}</strong></span>
     <span class="kv"><em>Cash</em><strong>${{ "%.0f"|format(account.cash) }}</strong></span>
@@ -8,5 +10,9 @@
     <em>Engine</em>
     <strong class="{{ 'on' if engine_running else 'off' }}">{{ "▶ ON" if engine_running else "⏸ OFF" }}</strong>
   </span>
+  <span class="kv" id="next-tick-pill" data-next-tick="">
+    <em>Next tick</em><strong id="next-tick">—</strong>
+  </span>
+  <span class="kv"><em>Ticks</em><strong>{{ tick_count }}</strong></span>
   {% if last_error %}<span class="kv err"><em>err</em><strong title="{{ last_error }}">!</strong></span>{% endif %}
 </span>

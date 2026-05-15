@@ -141,6 +141,18 @@ def build_router(app: FastAPI) -> APIRouter:
         lessons = await engine.reflect()
         return {"ok": True, "lessons": lessons}
 
+    @r.post("/api/engine/tick-interval")
+    async def engine_tick_interval(seconds: int = Form(...)):
+        if seconds < 5 or seconds > 24 * 3600:
+            raise HTTPException(400, "seconds must be between 5 and 86400")
+        settings.tick_seconds = seconds
+        # Restart the engine loop so the new interval is picked up immediately.
+        was_running = state.running
+        if was_running:
+            await engine.stop()
+            await engine.start()
+        return {"ok": True, "tick_seconds": seconds, "engine_running": state.running}
+
     # ---- Status fragments (HTMX) ----
 
     @r.get("/api/status", response_class=HTMLResponse)
@@ -160,6 +172,7 @@ def build_router(app: FastAPI) -> APIRouter:
                 "last_tick": state.last_tick,
                 "tick_count": state.tick_count,
                 "last_error": state.last_error,
+                "tick_seconds": settings.tick_seconds,
             },
         )
 

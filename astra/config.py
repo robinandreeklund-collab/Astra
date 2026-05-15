@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     port: int = Field(default=8765, alias="ASTRA_PORT")
 
     tick_seconds: int = Field(default=300, alias="ASTRA_TICK_SECONDS")
-    watchlist_size: int = Field(default=25, alias="ASTRA_WATCHLIST_SIZE")
+    watchlist_size: int = Field(default=10, alias="ASTRA_WATCHLIST_SIZE")
     max_position_pct: float = Field(default=0.05, alias="ASTRA_MAX_POSITION_PCT")
     daily_loss_limit_pct: float = Field(default=0.03, alias="ASTRA_DAILY_LOSS_LIMIT_PCT")
     fee_per_trade: float = Field(default=1.0, alias="ASTRA_FEE_PER_TRADE")

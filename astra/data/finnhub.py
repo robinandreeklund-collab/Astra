@@ -110,7 +110,7 @@ class FinnhubClient:
     # ---- endpoints we use ----
 
     async def quote(self, symbol: str) -> dict[str, Any]:
-        return await self._get("/quote", {"symbol": symbol}, cache_ttl=30)
+        return await self._get("/quote", {"symbol": symbol}, cache_ttl=60)
 
     async def candles(
         self,

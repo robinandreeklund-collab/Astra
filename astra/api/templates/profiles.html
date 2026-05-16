@@ -1,0 +1,45 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Stock Profiles{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Per-stock adaptive profiles ({{ profiles|length }})</h2>
+  <p class="muted small">
+    Every stock carries its own living profile. <strong>Character</strong> is
+    classified from price history; <strong>state</strong> &amp;
+    <strong>conviction</strong> adapt to this bot's realized trade record on
+    that exact stock. PROVEN names get sized up, BENCHED names are skipped.
+    Survives portfolio resets.
+  </p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Symbol</th><th>Character</th><th>Vol</th><th>ATR%</th>
+        <th>Trades</th><th>Win%</th><th>PF</th><th>Realized</th>
+        <th>Edge</th><th>State</th><th>Conviction</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for p in profiles %}
+      <tr class="{{ 'win' if p.edge_score > 0.05 else ('loss' if p.edge_score < -0.05 else '') }}">
+        <td><strong>{{ p.symbol }}</strong></td>
+        <td>{{ p.archetype }}</td>
+        <td>{{ p.vol_tier }}</td>
+        <td>{% if p.atr_pct %}{{ "%.1f"|format(p.atr_pct*100) }}%{% else %}—{% endif %}</td>
+        <td>{{ p.trades }}</td>
+        <td>{% if p.win_rate is not none %}{{ "%.0f"|format(p.win_rate*100) }}%{% else %}—{% endif %}</td>
+        <td>{% if p.profit_factor is not none %}{{ "%.2f"|format(p.profit_factor) }}{% else %}—{% endif %}</td>
+        <td>${{ "%.2f"|format(p.realized_pnl) }}</td>
+        <td>{{ "%+.2f"|format(p.edge_score) }}</td>
+        <td><span class="badge state-{{ p.state|lower }}">{{ p.state }}</span></td>
+        <td>{{ "%.2f"|format(p.conviction) }}×</td>
+      </tr>
+    {% endfor %}
+    {% if not profiles %}
+      <tr><td colspan="11" class="muted center">
+        No profiles yet — they're created as the scanner sees each stock.
+      </td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

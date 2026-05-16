@@ -31,6 +31,7 @@ class SignalBundle:
     earnings: dict[str, Any] = field(default_factory=dict)
     earnings_calendar: dict[str, Any] = field(default_factory=dict)
     social: dict[str, Any] = field(default_factory=dict)
+    character: dict[str, Any] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,9 +91,11 @@ class SignalAggregator:
         from astra.config import settings as _settings
         if _settings.simulate_data:
             from astra.data.simulator import get_simulator
+            from astra.profiles.character import compute_character
             rows = get_simulator().candles(symbol, 180)
             if rows:
                 b.technical = technical.compute_indicators(rows)
+                b.character = compute_character(rows)
                 b.quote = {"c": rows[-1]["c"]}
             else:
                 b.technical = {"available": False, "reason": "no_sim_data"}
@@ -113,6 +116,8 @@ class SignalAggregator:
                 rows = await fetch_daily_candles(symbol, days=180, cache=self.cache)
                 if rows:
                     b.technical = technical.compute_indicators(rows)
+                    from astra.profiles.character import compute_character
+                    b.character = compute_character(rows)
                 else:
                     b.technical = {"available": False, "reason": "no_candles"}
             except Exception as e:

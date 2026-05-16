@@ -126,9 +126,11 @@ async def test_max_open_positions_cap(portfolio_db, memory_db, cache_db, patched
     await portfolio_db.create_account(1_000_000)
     await memory_db.start_generation(1_000_000)
     # Pre-fill one position so the cap is already reached, and pin it HELD
-    # via signal dedup so it survives the tick.
-    await portfolio_db.upsert_position("AAPL", qty=1, avg_price=100.0)
-    bar_ts = technical.compute_indicators(_synthetic_candles("AAPL"))["last_bar_ts"]
+    # via signal dedup so it survives the tick. avg_price = the synthetic
+    # last close so adaptive stop/take-profit can't fire on a price gap.
+    _ind = technical.compute_indicators(_synthetic_candles("AAPL"))
+    await portfolio_db.upsert_position("AAPL", qty=1, avg_price=_ind["last_close"])
+    bar_ts = _ind["last_bar_ts"]
 
     state = EngineState()
     state.last_decision["AAPL"] = {
@@ -158,11 +160,11 @@ async def test_signal_dedup_skips_unchanged_bar(portfolio_db, memory_db, cache_d
     settings.trailing_stop_pct = 0.99
     await portfolio_db.create_account(100_000)
     await memory_db.start_generation(100_000)
-    await portfolio_db.upsert_position("AAPL", qty=1, avg_price=100.0)
-
-    # Pre-seed last_decision with the bar_ts the synthetic candles produce.
+    # Pre-seed last_decision with the bar_ts the synthetic candles produce;
+    # avg_price = last close so adaptive stop/take-profit can't fire.
     ind = technical.compute_indicators(_synthetic_candles("AAPL"))
     bar_ts = ind["last_bar_ts"]
+    await portfolio_db.upsert_position("AAPL", qty=1, avg_price=ind["last_close"])
     state = EngineState()
     state.last_decision["AAPL"] = {
         "bar_ts": bar_ts, "action": "HOLD", "decided_at": time.time()}

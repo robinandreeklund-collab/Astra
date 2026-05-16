@@ -165,12 +165,21 @@ class TradingEngine:
             from astra.data.simulator import get_simulator
             get_simulator(universe).advance()
 
+        # Load per-stock adaptive profiles + the global signal prior.
+        from astra.profiles import load_all_profiles, load_global
+        from astra.profiles.profile import all_global_rates
+        profiles = await load_all_profiles(self.memory)
+        global_profile = await load_global(self.memory)
+        global_rates = all_global_rates(global_profile)
+
         if settings.scan_universe and universe:
             from astra.engine.scanner import scan_universe
-            # Pass the prior snapshots so the scanner can weight momentum.
+            # Pass the prior snapshots so the scanner can weight momentum,
+            # and the profiles so it can apply the Thompson-sampling bandit.
             priors = {sym: hist[0] for sym, hist in self.state.signal_history.items() if hist}
             scored = await scan_universe(
-                universe, self.cache, settings.scan_top_n, priors=priors
+                universe, self.cache, settings.scan_top_n,
+                priors=priors, profiles=profiles,
             )
             top_candidates = [s["symbol"] for s in scored]
             symbols = list(dict.fromkeys(list(held) + priority + top_candidates))
@@ -261,6 +270,19 @@ class TradingEngine:
                 prices[symbol] = ref_price
                 bar_ts = int(tech.get("last_bar_ts") or 0)
 
+                # Per-stock adaptive profile. Refresh its Layer-1 character
+                # from the freshly fetched candles and persist it.
+                from astra.profiles import StockProfile, save_profile
+                profile = profiles.get(symbol) or StockProfile(symbol=symbol)
+                if bundle.character and bundle.character.get("classified"):
+                    profile.character = bundle.character
+                    await save_profile(self.memory, profile)
+                    profiles[symbol] = profile
+
+                # Volatility-scaled, per-stock stop / take-profit / trailing.
+                stop_pct = profile.adaptive_stop_pct(settings.stop_loss_pct)
+                take_pct = profile.adaptive_target_pct(settings.take_profit_pct)
+
                 pos = await self.portfolio.get_position(symbol)
 
                 # ============ HELD POSITION ============
@@ -277,12 +299,12 @@ class TradingEngine:
 
                     # --- Forced exits: always run, bypass cooldown/LLM ---
                     forced_reason = None
-                    if pct <= -settings.stop_loss_pct:
+                    if pct <= -stop_pct:
                         forced_reason = (f"STOP-LOSS: {pct*100:.1f}% "
-                                         f"(limit -{settings.stop_loss_pct*100:.0f}%)")
-                    elif pct >= settings.take_profit_pct:
+                                         f"(adaptive limit -{stop_pct*100:.1f}%)")
+                    elif pct >= take_pct:
                         forced_reason = (f"TAKE-PROFIT: {pct*100:+.1f}% "
-                                         f"(target +{settings.take_profit_pct*100:.0f}%)")
+                                         f"(adaptive target +{take_pct*100:.1f}%)")
                     elif (drop_from_high <= -settings.trailing_stop_pct and pct > 0):
                         forced_reason = (
                             f"TRAILING-STOP: {drop_from_high*100:.1f}% off the high "
@@ -319,7 +341,8 @@ class TradingEngine:
                     lessons, patterns = await retriever.for_decision(
                         bundle.pattern_hash()[0])
                     decision = await decider.decide(
-                        bundle_dict, pos, 0.0, lessons, patterns, mode="exit")
+                        bundle_dict, pos, 0.0, lessons, patterns, mode="exit",
+                        profile_card=profile.card(global_rates))
                     self.state.push_signal(symbol, bundle_dict)
                     self.state.last_decision[symbol] = {
                         "bar_ts": bar_ts, "action": decision.action,
@@ -373,7 +396,8 @@ class TradingEngine:
                 cash = float(acc["cash"]) if acc else 0.0
 
                 decision = await decider.decide(
-                    bundle_dict, None, cash, lessons, patterns, mode="entry")
+                    bundle_dict, None, cash, lessons, patterns, mode="entry",
+                    profile_card=profile.card(global_rates))
                 pattern_hash, pattern_desc = bundle.pattern_hash()
                 bundle_dict["_pattern_desc"] = pattern_desc
                 bundle_dict["_decision"] = decision.to_dict()
@@ -400,13 +424,20 @@ class TradingEngine:
                                               f"< {settings.entry_min_confidence}"})
                     continue
 
-                # --- Volatility-based sizing ---
+                # --- Benched stocks: the bot keeps losing here, skip entry ---
+                if profile.state() == "BENCHED":
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": "stock benched (poor track record)"})
+                    continue
+
+                # --- Volatility-based sizing × per-stock conviction ---
                 equity_pts = await self.portfolio.equity_history(limit=1)
                 equity = equity_pts[-1]["equity"] if equity_pts else cash
                 atr_pct = atr_pct_from_indicators(tech)
                 value = compute_buy_value(
                     equity, cash, decision.confidence * max(0.5, decision.size_pct),
-                    atr_pct, settings)
+                    atr_pct, settings,
+                    conviction_multiplier=profile.conviction_multiplier())
                 if value < settings.min_trade_value:
                     actions.append({"symbol": symbol, "action": "SKIP",
                                     "reason": f"trade ${value:.0f} < "

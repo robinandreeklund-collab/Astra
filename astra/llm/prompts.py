@@ -35,6 +35,9 @@ DECISION PRINCIPLES:
 - NEVER BUY if earnings are within 2 days.
 - SELL when holding AND signals turn bearish, momentum reverses, or your
   own profit/loss assessment says exit.
+- The {SYMBOL} PROFILE block (if present) is THIS bot's real track record on
+  this exact stock — weight it heavily. If a signal has failed on this name
+  before, distrust it now. If the stock is a trender, don't fade dips.
 """
 
 SYSTEM_REFLECTOR = """Read recent closed trades and write up to 3 short, concrete
@@ -60,6 +63,7 @@ def build_decision_user_prompt(
     lessons: list[str],
     pattern_stats: list[dict[str, Any]],
     mode: str = "entry",
+    profile_card: str | None = None,
 ) -> str:
     parts: list[str] = []
     sym = bundle_dict.get("symbol")
@@ -149,6 +153,12 @@ def build_decision_user_prompt(
         parts.append("CHANGES since last tick:")
         for ch in deltas.get("changes", []):
             parts.append(f"  · {ch}")
+
+    # Per-stock adaptive profile — the bot's own track record on THIS name.
+    # Weight it heavily: it reflects what has actually worked here.
+    if profile_card:
+        parts.append("")
+        parts.append(profile_card)
 
     if lessons:
         parts.append("LESSONS:")

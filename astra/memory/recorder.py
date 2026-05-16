@@ -29,12 +29,12 @@ class MemoryRecorder:
     async def record_close(self, sell_trade: dict[str, Any]) -> None:
         if sell_trade.get("side") != "SELL":
             return
-        pattern_hash = sell_trade.get("pattern_hash")
-        if not pattern_hash:
-            return
-        pnl = sell_trade.get("pnl") or 0.0
+        pnl = float(sell_trade.get("pnl") or 0.0)
         win = pnl > 0
+        symbol = sell_trade.get("symbol")
+
         hold_minutes = 0.0
+        opening: dict[str, Any] | None = None
         closed_id = sell_trade.get("closed_trade_id")
         if closed_id:
             opening = await self.portfolio.get_trade(int(closed_id))
@@ -45,12 +45,51 @@ class MemoryRecorder:
                     hold_minutes = max(0.0, (b - a).total_seconds() / 60.0)
 
         snapshot = sell_trade.get("signal_snapshot") or {}
-        pattern_desc = (snapshot.get("_pattern_desc") or pattern_hash)
-        await self.memory.record_pattern_outcome(
-            pattern_hash=pattern_hash,
-            pattern_desc=pattern_desc,
-            win=win,
-            pnl=float(pnl),
-            hold_minutes=hold_minutes,
+
+        # --- Global pattern stats ---
+        pattern_hash = sell_trade.get("pattern_hash")
+        if pattern_hash:
+            pattern_desc = snapshot.get("_pattern_desc") or pattern_hash
+            await self.memory.record_pattern_outcome(
+                pattern_hash=pattern_hash,
+                pattern_desc=pattern_desc,
+                win=win,
+                pnl=pnl,
+                hold_minutes=hold_minutes,
+            )
+
+        # --- Per-stock adaptive profile (Layers 2 & 3 + bandit) ---
+        if symbol:
+            await self._update_profile(symbol, win, pnl, hold_minutes, opening)
+
+        log.info("Recorded close %s win=%s pnl=%.2f", symbol, win, pnl)
+
+    async def _update_profile(
+        self,
+        symbol: str,
+        win: bool,
+        pnl: float,
+        hold_minutes: float,
+        opening: dict[str, Any] | None,
+    ) -> None:
+        from astra.profiles import (
+            GLOBAL_SYMBOL,
+            extract_signals,
+            load_profile,
+            save_profile,
         )
-        log.info("Recorded pattern outcome %s win=%s pnl=%.2f", pattern_hash, win, pnl)
+
+        # Entry signals come from the BUY trade's stored snapshot.
+        entry_snapshot = (opening or {}).get("signal_snapshot") or {}
+        entry_signals = extract_signals(entry_snapshot)
+
+        profile = await load_profile(self.memory, symbol)
+        profile.record_trade_outcome(win, pnl, hold_minutes, entry_signals)
+        await save_profile(self.memory, profile)
+
+        # The global aggregate profile collects signal outcomes across all
+        # stocks; it's the shrinkage prior for per-stock signal rates.
+        if entry_signals:
+            global_profile = await load_profile(self.memory, GLOBAL_SYMBOL)
+            global_profile.record_trade_outcome(win, pnl, hold_minutes, entry_signals)
+            await save_profile(self.memory, global_profile)

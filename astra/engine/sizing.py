@@ -26,11 +26,18 @@ def compute_buy_value(
     confidence: float,
     atr_pct: float | None,
     settings: Settings,
+    conviction_multiplier: float = 1.0,
 ) -> float:
-    """Return the dollar value to deploy into a new position (0 = skip)."""
+    """Return the dollar value to deploy into a new position (0 = skip).
+
+    `conviction_multiplier` (0.3..1.5) comes from the stock's adaptive
+    profile — a proven winner is sized up, a name on probation is sized
+    down — and is applied on top of the volatility-scaled risk budget.
+    """
     if equity <= 0 or cash <= 0:
         return 0.0
     confidence = max(0.0, min(1.0, confidence))
+    conviction_multiplier = max(0.1, min(2.0, conviction_multiplier))
 
     base = equity * settings.target_position_pct
     risk_cap = (equity * settings.risk_per_trade_pct) / max(settings.stop_loss_pct, 0.01)
@@ -41,7 +48,7 @@ def compute_buy_value(
     if atr_pct and atr_pct > 0:
         vol_factor = min(1.0, 0.02 / atr_pct)
 
-    target = min(base, risk_cap) * confidence * vol_factor
+    target = min(base, risk_cap) * confidence * vol_factor * conviction_multiplier
     target = min(target, equity * settings.max_position_pct)
     target = min(target, cash * 0.95)
     return max(0.0, target)

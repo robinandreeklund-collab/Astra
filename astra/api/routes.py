@@ -85,6 +85,45 @@ def build_router(app: FastAPI) -> APIRouter:
             },
         )
 
+    @r.get("/profiles", response_class=HTMLResponse)
+    async def profiles_page(request: Request):
+        from astra.profiles import GLOBAL_SYMBOL, load_all_profiles
+        all_profiles = await load_all_profiles(memory)
+        rows = []
+        for sym, p in all_profiles.items():
+            if sym == GLOBAL_SYMBOL:
+                continue
+            ch = p.character or {}
+            rows.append({
+                "symbol": sym,
+                "archetype": ch.get("archetype", "—"),
+                "vol_tier": ch.get("vol_tier", "—"),
+                "atr_pct": ch.get("atr_pct"),
+                "trades": p.trades,
+                "win_rate": p.win_rate(),
+                "profit_factor": p.profit_factor(),
+                "realized_pnl": p.realized_pnl,
+                "edge_score": p.edge_score(),
+                "state": p.state(),
+                "conviction": p.conviction_multiplier(),
+                "streak": p.current_streak,
+            })
+        # Most-traded first, then by edge
+        rows.sort(key=lambda r: (r["trades"], r["edge_score"]), reverse=True)
+        return templates.TemplateResponse(
+            request, "profiles.html", {"profiles": rows},
+        )
+
+    @r.get("/api/profiles")
+    async def api_profiles():
+        from astra.profiles import GLOBAL_SYMBOL, load_all_profiles
+        all_profiles = await load_all_profiles(memory)
+        return {
+            "profiles": [
+                p.to_dict() for s, p in all_profiles.items() if s != GLOBAL_SYMBOL
+            ]
+        }
+
     # ---- Setup / Account ----
 
     @r.post("/api/setup")

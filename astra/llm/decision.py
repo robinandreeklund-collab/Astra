@@ -58,13 +58,16 @@ class DecisionEngine:
         lessons: list[str],
         pattern_stats: list[dict[str, Any]],
         mode: str = "entry",
+        profile_card: str | None = None,
     ) -> Decision:
         if self.client is None:
             return await self.fallback.decide(
-                bundle_dict, position, cash, lessons, pattern_stats, mode=mode)
+                bundle_dict, position, cash, lessons, pattern_stats,
+                mode=mode, profile_card=profile_card)
         try:
             user = build_decision_user_prompt(
-                bundle_dict, position, cash, lessons, pattern_stats, mode=mode)
+                bundle_dict, position, cash, lessons, pattern_stats,
+                mode=mode, profile_card=profile_card)
             raw = await self.client.chat_json(
                 SYSTEM_TRADER, user,
                 temperature=0.2, max_tokens=400,
@@ -94,7 +97,8 @@ class DecisionEngine:
         except Exception as e:
             log.warning("LLM decision failed (%s); falling back to heuristic", e)
             d = await self.fallback.decide(
-                bundle_dict, position, cash, lessons, pattern_stats, mode=mode)
+                bundle_dict, position, cash, lessons, pattern_stats,
+                mode=mode, profile_card=profile_card)
             d.reasoning = f"[llm-fallback: {e.__class__.__name__}] {d.reasoning}"
             return d
 
@@ -110,6 +114,7 @@ class HeuristicDecisionEngine:
         lessons: list[str],
         pattern_stats: list[dict[str, Any]],
         mode: str = "entry",
+        profile_card: str | None = None,
     ) -> Decision:
         tech = bundle_dict.get("technical") or {}
         if not tech.get("available"):

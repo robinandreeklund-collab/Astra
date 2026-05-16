@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS generations (
     trade_count INTEGER,
     notes TEXT
 );
+
+CREATE TABLE IF NOT EXISTS stock_profiles (
+    symbol TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -231,3 +237,40 @@ class MemoryDB(SQLiteDB):
                 await conn.execute("SELECT * FROM generations ORDER BY id DESC")
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ---- stock profiles (per-stock adaptive memory) ----
+
+    async def get_stock_profile(self, symbol: str) -> dict[str, Any] | None:
+        async with self.session() as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT data FROM stock_profiles WHERE symbol=?", (symbol,)
+                )
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                return json.loads(row["data"])
+            except Exception:
+                return None
+
+    async def save_stock_profile(self, symbol: str, data: dict[str, Any]) -> None:
+        async with self.session() as conn:
+            await conn.execute(
+                "INSERT OR REPLACE INTO stock_profiles(symbol, data, updated_at) "
+                "VALUES(?,?,?)",
+                (symbol, json.dumps(data), _now()),
+            )
+
+    async def all_stock_profiles(self) -> list[dict[str, Any]]:
+        async with self.session() as conn:
+            rows = await (
+                await conn.execute("SELECT data FROM stock_profiles")
+            ).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                try:
+                    out.append(json.loads(r["data"]))
+                except Exception:
+                    continue
+            return out

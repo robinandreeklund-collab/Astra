@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from typing import Any
 
@@ -96,13 +97,22 @@ async def scan_universe(
     cache: CacheDB,
     top_n: int,
     priors: dict[str, dict[str, Any]] | None = None,
+    profiles: dict[str, Any] | None = None,
     concurrency: int = 16,
 ) -> list[dict[str, Any]]:
-    """Score every symbol in `symbols` and return the top `top_n` by score."""
+    """Score every symbol and return the top `top_n` by score.
+
+    When `profiles` (symbol -> StockProfile) is given, each symbol's raw TA
+    score is multiplied by a Thompson-sampling bandit weight drawn from that
+    stock's win-rate posterior — proven winners get ranked up, names the bot
+    keeps losing on get ranked down, but every stock keeps a non-zero chance
+    of being picked so the universe stays explored.
+    """
     if not symbols:
         return []
     t0 = time.monotonic()
     sem = asyncio.Semaphore(concurrency)
+    rng = random.Random()
 
     async def _one(sym: str) -> dict[str, Any] | None:
         async with sem:
@@ -115,6 +125,17 @@ async def scan_universe(
 
     results = await asyncio.gather(*[_one(s) for s in symbols])
     scored = [r for r in results if r is not None and r["score"] > 0]
+
+    for r in scored:
+        r["ta_score"] = r["score"]
+        weight = 1.0
+        prof = (profiles or {}).get(r["symbol"])
+        if prof is not None:
+            # Bandit sample ≈ a win-rate draw; map to a 0.4..1.6 multiplier.
+            weight = 0.4 + 1.2 * prof.bandit_sample(rng)
+        r["bandit_weight"] = round(weight, 3)
+        r["score"] = r["ta_score"] * weight
+
     scored.sort(key=lambda r: r["score"], reverse=True)
     top = scored[: max(1, top_n)]
     elapsed = time.monotonic() - t0

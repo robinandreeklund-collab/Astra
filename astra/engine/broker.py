@@ -40,6 +40,13 @@ class PaperBroker:
         bps = settings.slippage_bps / 10000.0
         return ref_price * (1 + bps) if side == "BUY" else ref_price * (1 - bps)
 
+    def _commission(self, notional: float) -> float:
+        """Avanza-style commission: percentage of order value, with a floor.
+
+        fee = max(min_fee, fee_pct * notional)
+        """
+        return max(settings.min_fee, settings.fee_pct * abs(notional))
+
     async def buy(
         self,
         symbol: str,
@@ -53,7 +60,7 @@ class PaperBroker:
         if qty <= 0:
             raise ValueError("qty must be > 0")
         price = self._slippage_price("BUY", ref_price)
-        fees = settings.fee_per_trade
+        fees = self._commission(price * qty)
         cost = price * qty + fees
 
         acc = await self.portfolio.get_account()
@@ -100,7 +107,7 @@ class PaperBroker:
             raise NoPosition(f"cannot SELL {qty} {symbol} (have {existing['qty'] if existing else 0})")
 
         price = self._slippage_price("SELL", ref_price)
-        fees = settings.fee_per_trade
+        fees = self._commission(price * qty)
         proceeds = price * qty - fees
 
         acc = await self.portfolio.get_account()

@@ -54,7 +54,9 @@ class RiskManager:
         acc = await self.portfolio.get_account()
         if not acc:
             return False, "no account"
-        cost = qty * ref_price + settings.fee_per_trade
+        notional = qty * ref_price
+        commission = max(settings.min_fee, settings.fee_pct * notional)
+        cost = notional + commission
         if cost > acc["cash"]:
             return False, "insufficient cash"
         existing = await self.portfolio.get_position(symbol)

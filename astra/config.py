@@ -29,7 +29,12 @@ class Settings(BaseSettings):
     watchlist_size: int = Field(default=25, alias="ASTRA_WATCHLIST_SIZE")
     max_position_pct: float = Field(default=0.15, alias="ASTRA_MAX_POSITION_PCT")
     daily_loss_limit_pct: float = Field(default=0.05, alias="ASTRA_DAILY_LOSS_LIMIT_PCT")
-    fee_per_trade: float = Field(default=0.05, alias="ASTRA_FEE_PER_TRADE")
+    # Commission model — Avanza-style: a percentage of the order value with
+    # a per-trade minimum. fee = max(min_fee, fee_pct * order_value).
+    # Avanza Mini: 0.25% (fee_pct=0.0025), minimum 1 SEK. Prices here are in
+    # USD, so min_fee defaults to ~1 SEK converted (≈ $0.10).
+    fee_pct: float = Field(default=0.0025, alias="ASTRA_FEE_PCT")
+    min_fee: float = Field(default=0.10, alias="ASTRA_MIN_FEE")
     slippage_bps: float = Field(default=5.0, alias="ASTRA_SLIPPAGE_BPS")
 
     # Auto-exit rules — enforced before the LLM/heuristic even sees the symbol.

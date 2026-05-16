@@ -87,7 +87,7 @@ Take-profit %:       +{{ "%.0f"|format(settings.take_profit_pct*100) }}%   (auto
 Trailing-stop %:     -{{ "%.0f"|format(settings.trailing_stop_pct*100) }}%   (auto-sell off the high)
 Entry min conf:      {{ settings.entry_min_confidence }}
 Risk per trade %:    {{ "%.0f"|format(settings.risk_per_trade_pct*100) }}%
-Fee per trade:       ${{ settings.fee_per_trade }}
+Commission:          {{ "%.2f"|format(settings.fee_pct*100) }}% of order, min ${{ "%.2f"|format(settings.min_fee) }}  (Avanza Mini)
 Slippage bps:        {{ settings.slippage_bps }}
 Finnhub key set:     {{ "yes" if settings.finnhub_api_key else "NO" }}
   </pre>

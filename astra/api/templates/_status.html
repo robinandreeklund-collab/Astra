@@ -10,6 +10,9 @@
     <em>Engine</em>
     <strong class="{{ 'on' if engine_running else 'off' }}">{{ "▶ ON" if engine_running else "⏸ OFF" }}</strong>
   </span>
+  {% if simulate_data %}
+  <span class="kv"><em>Data</em><strong class="sim">◈ SIM</strong></span>
+  {% endif %}
   <span class="kv" id="next-tick-pill" data-next-tick="">
     <em>Next tick</em><strong id="next-tick">—</strong>
   </span>

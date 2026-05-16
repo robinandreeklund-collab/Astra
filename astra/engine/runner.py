@@ -113,6 +113,10 @@ class TradingEngine:
         self._tick_lock = asyncio.Lock()
 
     async def ensure_universe(self) -> list[str]:
+        if settings.simulate_data:
+            # No network in sim mode — use the static large-cap list.
+            from astra.data.universe import FALLBACK_SP500
+            return list(FALLBACK_SP500)
         if self._universe:
             return self._universe
         async with FinnhubClient(cache=self.cache) as fc:
@@ -154,6 +158,12 @@ class TradingEngine:
         # Build the deep-dive symbol list
         held = {p["symbol"] for p in await self.portfolio.get_positions()}
         universe = await self.ensure_universe()
+
+        # Simulation mode: advance the synthetic market one trading day so
+        # every symbol gets a fresh bar for this tick.
+        if settings.simulate_data:
+            from astra.data.simulator import get_simulator
+            get_simulator(universe).advance()
 
         if settings.scan_universe and universe:
             from astra.engine.scanner import scan_universe

@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     scan_universe: bool = Field(default=True, alias="ASTRA_SCAN_UNIVERSE")
     scan_top_n: int = Field(default=30, alias="ASTRA_SCAN_TOP_N")
 
+    # Simulation mode: when on, all market data comes from a synthetic
+    # regime-switching simulator instead of Finnhub/yfinance. Lets you watch
+    # the bot trade when the market is closed or there's no API key.
+    simulate_data: bool = Field(default=False, alias="ASTRA_SIMULATE_DATA")
+
     data_dir: Path = Field(default=Path("./data"), alias="ASTRA_DATA_DIR")
 
     @property

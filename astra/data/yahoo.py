@@ -81,7 +81,15 @@ async def fetch_daily_candles(
     days: int = 180,
     cache: CacheDB | None = None,
 ) -> list[dict[str, Any]]:
-    """Return daily candles for ~`days` back, served from cache when possible."""
+    """Return daily candles for ~`days` back, served from cache when possible.
+
+    In simulation mode the candles come from the synthetic market instead of
+    Yahoo, and are never cached (the sim advances every tick)."""
+    from astra.config import settings as _settings
+    if _settings.simulate_data:
+        from astra.data.simulator import get_simulator
+        return get_simulator().candles(symbol, days)
+
     sym = symbol.replace(".", "-")  # BRK.B -> BRK-B for yfinance
     period = _period_for(days)
     cache_key = f"yf:{sym}:{period}"

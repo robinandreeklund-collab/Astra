@@ -34,6 +34,26 @@
     <button class="btn small" onclick="setTick(parseInt(document.getElementById('tick-custom').value,10))">Apply</button>
     <span class="muted small" id="tick-status"></span>
   </div>
+
+  <h3 style="margin-top:14px;">Simulation mode</h3>
+  <p class="muted small">
+    When ON, all market data is synthetic — a regime-switching simulator
+    with trends, choppy phases and volume spikes. Each tick advances one
+    simulated trading day, so you can watch the bot trade with the real
+    market closed. No Finnhub / Yahoo calls are made.
+  </p>
+  <p class="muted small">
+    Currently: <strong id="sim-state">{{ "ON" if settings.simulate_data else "OFF" }}</strong>.
+    Switching mode clears price caches — <strong>reset the portfolio</strong>
+    afterwards so P&amp;L isn't measured against the other dataset's prices.
+  </p>
+  <div class="row">
+    <button class="btn small {{ 'primary' if not settings.simulate_data else '' }}"
+            onclick="setSim(true)">Turn simulation ON</button>
+    <button class="btn small {{ 'primary' if settings.simulate_data else '' }}"
+            onclick="setSim(false)">Turn simulation OFF (live data)</button>
+    <span class="muted small" id="sim-status"></span>
+  </div>
 </section>
 
 <section class="card danger">
@@ -103,6 +123,26 @@ async function setTick(seconds) {
     if (r.ok) {
       status.textContent = `Set to ${d.tick_seconds}s.`;
       setTimeout(() => location.reload(), 600);
+    } else {
+      status.textContent = 'Error: ' + JSON.stringify(d);
+    }
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function setSim(enabled) {
+  const status = document.getElementById('sim-status');
+  status.textContent = 'Applying…';
+  const fd = new FormData();
+  fd.append('enabled', enabled ? 'true' : 'false');
+  try {
+    const r = await fetch('/api/engine/sim-mode', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (r.ok) {
+      status.textContent = 'Simulation ' + (d.simulate_data ? 'ON' : 'OFF') +
+        '. Reload + reset recommended.';
+      setTimeout(() => location.reload(), 800);
     } else {
       status.textContent = 'Error: ' + JSON.stringify(d);
     }

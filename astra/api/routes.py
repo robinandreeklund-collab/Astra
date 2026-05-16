@@ -154,6 +154,22 @@ def build_router(app: FastAPI) -> APIRouter:
             await engine.start()
         return {"ok": True, "tick_seconds": seconds, "engine_running": state.running}
 
+    @r.post("/api/engine/sim-mode")
+    async def engine_sim_mode(enabled: bool = Form(...)):
+        settings.simulate_data = bool(enabled)
+        # Start a fresh synthetic market and clear stale per-symbol caches so
+        # simulated and real data never cross-contaminate.
+        if settings.simulate_data:
+            from astra.data.simulator import reset_simulator
+            from astra.data.universe import FALLBACK_SP500
+            reset_simulator(list(FALLBACK_SP500))
+        state.last_prices.clear()
+        state.signal_history.clear()
+        state.last_decision.clear()
+        state.last_trade_at.clear()
+        state.last_scan = {}
+        return {"ok": True, "simulate_data": settings.simulate_data}
+
     # ---- Status fragments (HTMX) ----
 
     @r.get("/api/status", response_class=HTMLResponse)
@@ -174,6 +190,7 @@ def build_router(app: FastAPI) -> APIRouter:
                 "tick_count": state.tick_count,
                 "last_error": state.last_error,
                 "tick_seconds": settings.tick_seconds,
+                "simulate_data": settings.simulate_data,
             },
         )
 

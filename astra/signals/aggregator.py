@@ -85,6 +85,19 @@ class SignalAggregator:
     async def fetch(self, symbol: str) -> SignalBundle:
         b = SignalBundle(symbol=symbol, fetched_at=time.time())
 
+        # Simulation mode: technicals come from the synthetic market and the
+        # Finnhub-backed signals (news, insider, recs, etc.) are skipped.
+        from astra.config import settings as _settings
+        if _settings.simulate_data:
+            from astra.data.simulator import get_simulator
+            rows = get_simulator().candles(symbol, 180)
+            if rows:
+                b.technical = technical.compute_indicators(rows)
+                b.quote = {"c": rows[-1]["c"]}
+            else:
+                b.technical = {"available": False, "reason": "no_sim_data"}
+            return b
+
         async def _quote() -> None:
             try:
                 b.quote = await self.client.quote(symbol)

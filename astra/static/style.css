@@ -89,6 +89,7 @@ input[type=number], input[type=text] { background: var(--bg); color: var(--text)
 .kv strong { font-size: 12px; }
 .kv strong.on { color: var(--good); }
 .kv strong.off { color: var(--muted); }
+.kv strong.sim { color: #db4; }
 .kv.err strong { color: var(--bad); }
 
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 10px; overflow-x: auto; }

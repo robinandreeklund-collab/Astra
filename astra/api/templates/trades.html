@@ -3,13 +3,15 @@
 {% block content %}
 <section class="card">
   <h2>All trades ({{ trades|length }})</h2>
+  <p class="muted small">Click a row to see the price chart with the buy/sell points.</p>
   <table class="table">
     <thead>
       <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Fees</th><th>PnL</th><th>Reasoning</th></tr>
     </thead>
     <tbody>
       {% for t in trades %}
-      <tr class="{{ 'win' if (t.pnl or 0) > 0 else ('loss' if (t.pnl or 0) < 0 else '') }}">
+      <tr class="trade-row {{ 'win' if (t.pnl or 0) > 0 else ('loss' if (t.pnl or 0) < 0 else '') }}"
+          data-trade-id="{{ t.id }}" style="cursor:pointer;">
         <td class="muted">{{ t.executed_at[:19] }}</td>
         <td><strong>{{ t.symbol }}</strong></td>
         <td><span class="badge {{ t.side|lower }}">{{ t.side }}</span></td>
@@ -26,4 +28,127 @@
     </tbody>
   </table>
 </section>
+
+<div id="trade-modal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2 id="tm-title">Trade</h2>
+      <button class="btn small" id="tm-close">✕</button>
+    </div>
+    <div id="tm-kpis" class="modal-kpis"></div>
+    <canvas id="tm-chart" height="140"></canvas>
+    <div id="tm-detail" class="small"></div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const modal = document.getElementById('trade-modal');
+  const closeBtn = document.getElementById('tm-close');
+  let chart = null;
+
+  function close() { modal.style.display = 'none'; }
+  closeBtn.addEventListener('click', close);
+  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+
+  document.querySelectorAll('.trade-row').forEach(row => {
+    row.addEventListener('click', async () => {
+      const id = row.dataset.tradeId;
+      if (!id) return;
+      modal.style.display = 'flex';
+      document.getElementById('tm-title').textContent = 'Loading…';
+      document.getElementById('tm-kpis').innerHTML = '';
+      document.getElementById('tm-detail').innerHTML = '';
+      try {
+        const r = await fetch('/api/trade/' + id);
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        renderTrade(d);
+      } catch (e) {
+        document.getElementById('tm-title').textContent = 'Error';
+        document.getElementById('tm-detail').textContent = e.message;
+      }
+    });
+  });
+
+  function markerDataset(label, marker, color) {
+    if (!marker || marker.index === null || marker.index === undefined) return null;
+    const data = new Array(arguments[3] || 0).fill(null);
+    return {
+      label: label,
+      data: [{ x: marker.index, y: marker.price }],
+      type: 'scatter',
+      pointStyle: label.startsWith('Buy') ? 'triangle' : 'rectRot',
+      pointRadius: 11,
+      pointHoverRadius: 13,
+      borderColor: color,
+      backgroundColor: color,
+      showLine: false,
+    };
+  }
+
+  function renderTrade(d) {
+    document.getElementById('tm-title').textContent =
+      d.symbol + ' — ' + (d.open ? 'open position' : 'closed trade');
+
+    const kpis = [];
+    if (d.buy) kpis.push(['Buy', '$' + d.buy.price.toFixed(2)]);
+    if (d.sell) kpis.push(['Sell', '$' + d.sell.price.toFixed(2)]);
+    if (d.pnl !== null && d.pnl !== undefined) {
+      const cls = d.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+      kpis.push(['P&L', '<span class="' + cls + '">$' + d.pnl.toFixed(2) + '</span>']);
+    }
+    if (d.buy && d.sell && d.buy.price > 0) {
+      const ret = (d.sell.price - d.buy.price) / d.buy.price * 100;
+      kpis.push(['Return', ret.toFixed(2) + '%']);
+    }
+    document.getElementById('tm-kpis').innerHTML = kpis.map(
+      k => '<div><em>' + k[0] + '</em><strong>' + k[1] + '</strong></div>').join('');
+
+    const datasets = [{
+      label: 'Close', data: d.closes, borderColor: '#3aa',
+      tension: 0.2, fill: false, pointRadius: 0, order: 2,
+    }];
+    const buyDs = markerDataset('Buy', d.buy, '#3c3');
+    const sellDs = markerDataset('Sell', d.sell, '#e55');
+    if (buyDs) { buyDs.order = 1; datasets.push(buyDs); }
+    if (sellDs) { sellDs.order = 1; datasets.push(sellDs); }
+
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById('tm-chart'), {
+      type: 'line',
+      data: { labels: d.dates, datasets: datasets },
+      options: {
+        animation: false,
+        parsing: true,
+        plugins: { legend: { labels: { color: '#aaa' } } },
+        scales: {
+          x: { type: 'category', ticks: { color: '#777', maxTicksLimit: 8 } },
+          y: { ticks: { color: '#aaa' } },
+        },
+      },
+    });
+
+    const parts = [];
+    if (d.buy) {
+      parts.push('<p><strong>Buy</strong> ' + d.buy.executed_at.slice(0,19) +
+        ' · qty ' + d.buy.qty.toFixed(4) +
+        (d.buy.reasoning ? '<br><span class="muted">' + d.buy.reasoning + '</span>' : '') + '</p>');
+    }
+    if (d.sell) {
+      parts.push('<p><strong>Sell</strong> ' + d.sell.executed_at.slice(0,19) +
+        ' · qty ' + d.sell.qty.toFixed(4) +
+        (d.sell.reasoning ? '<br><span class="muted">' + d.sell.reasoning + '</span>' : '') + '</p>');
+    } else {
+      parts.push('<p class="muted">Position still open — no sell yet.</p>');
+    }
+    if ((d.buy && d.buy.index === null) || (d.sell && d.sell.index === null)) {
+      parts.push('<p class="muted small">Note: a marker fell outside the available ' +
+        'candle window, so its exact position on the chart is approximate or hidden.</p>');
+    }
+    document.getElementById('tm-detail').innerHTML = parts.join('');
+  }
+});
+</script>
 {% endblock %}

@@ -117,6 +117,24 @@ form button { align-self: flex-start; }
   border: 1px solid var(--border); border-radius: 6px; margin-bottom: 16px; }
 .pnl-formula strong { color: var(--accent-2); }
 
+/* Trade detail modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal-box { background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 18px; width: min(760px, 92vw);
+  max-height: 90vh; overflow-y: auto; }
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+.modal-head h2 { margin: 0; }
+.modal-kpis { display: flex; gap: 18px; flex-wrap: wrap; margin: 12px 0; }
+.modal-kpis > div { display: flex; flex-direction: column; }
+.modal-kpis em { color: var(--muted); font-style: normal; font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px; }
+.modal-kpis strong { font-size: 18px; }
+.modal-kpis .pnl-pos { color: #6e6; }
+.modal-kpis .pnl-neg { color: #f88; }
+.trade-row:hover td { background: rgba(255,255,255,0.04); }
+#tm-detail p { margin: 6px 0; }
+
 /* Universe scan header */
 .scan-header { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;
   padding-bottom: 8px; border-bottom: 1px solid var(--border); }

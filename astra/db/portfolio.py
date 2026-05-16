@@ -230,6 +230,25 @@ class PortfolioDB(SQLiteDB):
                 pass
             return d
 
+    async def find_sell_for_buy(self, buy_id: int) -> dict[str, Any] | None:
+        """The SELL trade that closed a given BUY, if any."""
+        async with self.session() as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT * FROM trades WHERE side='SELL' AND closed_trade_id=? "
+                    "ORDER BY executed_at ASC LIMIT 1",
+                    (buy_id,),
+                )
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            try:
+                d["signal_snapshot"] = json.loads(d["signal_snapshot"])
+            except Exception:
+                pass
+            return d
+
     async def open_buy_trade_for(self, symbol: str) -> dict[str, Any] | None:
         """Last unmatched BUY trade for a symbol (FIFO)."""
         async with self.session() as conn:

@@ -351,6 +351,59 @@ def build_router(app: FastAPI) -> APIRouter:
         hist = await portfolio.equity_history(limit=limit)
         return {"points": hist}
 
+    @r.get("/api/trade/{trade_id}")
+    async def api_trade(trade_id: int):
+        """Trade detail + price chart with buy/sell markers."""
+        trade = await portfolio.get_trade(trade_id)
+        if not trade:
+            raise HTTPException(404, "trade not found")
+        symbol = trade["symbol"]
+
+        # Resolve the buy/sell pair.
+        buy = sell = None
+        if trade["side"] == "SELL":
+            sell = trade
+            if trade.get("closed_trade_id"):
+                buy = await portfolio.get_trade(int(trade["closed_trade_id"]))
+        else:
+            buy = trade
+            sell = await portfolio.find_sell_for_buy(trade_id)
+
+        # Candle history for the chart (yfinance live, simulator in sim mode).
+        from astra.data.yahoo import fetch_daily_candles
+        candles = await fetch_daily_candles(symbol, days=180, cache=cache)
+        dates = [
+            datetime.fromtimestamp(int(c["t"]), tz=timezone.utc).date().isoformat()
+            for c in candles
+        ]
+        closes = [float(c["c"]) for c in candles]
+        ts_to_index = {int(c["t"]): i for i, c in enumerate(candles)}
+
+        def marker(t: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not t:
+                return None
+            snap = t.get("signal_snapshot") or {}
+            bar_ts = (snap.get("technical") or {}).get("last_bar_ts")
+            idx = ts_to_index.get(int(bar_ts)) if bar_ts else None
+            return {
+                "index": idx,
+                "price": float(t["price"]),
+                "executed_at": t["executed_at"],
+                "qty": float(t["qty"]),
+                "fees": float(t["fees"]),
+                "reasoning": t.get("llm_reasoning") or "",
+            }
+
+        return {
+            "symbol": symbol,
+            "dates": dates,
+            "closes": closes,
+            "buy": marker(buy),
+            "sell": marker(sell),
+            "pnl": (float(sell["pnl"]) if sell and sell.get("pnl") is not None else None),
+            "open": sell is None,
+        }
+
     @r.get("/api/signals/{symbol}")
     async def api_signals(symbol: str):
         from astra.data.finnhub import FinnhubClient

@@ -56,14 +56,20 @@ LM Studio model:  {{ settings.lm_studio_model }}
 Tick seconds:     {{ settings.tick_seconds }}   (live-adjustable above)
 Watchlist size:   {{ settings.watchlist_size }}
 Custom watchlist: {{ settings.custom_watchlist or "(none — using S&P 500 top)" }}
-Max position %:   {{ "%.0f"|format(settings.max_position_pct*100) }}%
-Daily loss cap %: {{ "%.0f"|format(settings.daily_loss_limit_pct*100) }}%
-Stop-loss %:      -{{ "%.0f"|format(settings.stop_loss_pct*100) }}%   (auto-sell)
-Take-profit %:    +{{ "%.0f"|format(settings.take_profit_pct*100) }}%   (auto-sell)
-Min confidence:   {{ settings.min_confidence }}
-Fee per trade:    ${{ settings.fee_per_trade }}
-Slippage bps:     {{ settings.slippage_bps }}
-Finnhub key set:  {{ "yes" if settings.finnhub_api_key else "NO" }}
+Max position %:      {{ "%.0f"|format(settings.max_position_pct*100) }}%
+Target position %:   {{ "%.0f"|format(settings.target_position_pct*100) }}%
+Max open positions:  {{ settings.max_open_positions }}
+Min trade value:     ${{ settings.min_trade_value }}
+Cooldown:            {{ settings.cooldown_minutes }} min
+Daily loss cap %:    {{ "%.0f"|format(settings.daily_loss_limit_pct*100) }}%
+Stop-loss %:         -{{ "%.0f"|format(settings.stop_loss_pct*100) }}%   (auto-sell)
+Take-profit %:       +{{ "%.0f"|format(settings.take_profit_pct*100) }}%   (auto-sell)
+Trailing-stop %:     -{{ "%.0f"|format(settings.trailing_stop_pct*100) }}%   (auto-sell off the high)
+Entry min conf:      {{ settings.entry_min_confidence }}
+Risk per trade %:    {{ "%.0f"|format(settings.risk_per_trade_pct*100) }}%
+Fee per trade:       ${{ settings.fee_per_trade }}
+Slippage bps:        {{ settings.slippage_bps }}
+Finnhub key set:     {{ "yes" if settings.finnhub_api_key else "NO" }}
   </pre>
 </section>
 

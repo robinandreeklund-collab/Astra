@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
     tick_seconds: int = Field(default=300, alias="ASTRA_TICK_SECONDS")
     watchlist_size: int = Field(default=25, alias="ASTRA_WATCHLIST_SIZE")
-    max_position_pct: float = Field(default=0.08, alias="ASTRA_MAX_POSITION_PCT")
+    max_position_pct: float = Field(default=0.15, alias="ASTRA_MAX_POSITION_PCT")
     daily_loss_limit_pct: float = Field(default=0.05, alias="ASTRA_DAILY_LOSS_LIMIT_PCT")
     fee_per_trade: float = Field(default=0.05, alias="ASTRA_FEE_PER_TRADE")
     slippage_bps: float = Field(default=5.0, alias="ASTRA_SLIPPAGE_BPS")
@@ -35,7 +35,23 @@ class Settings(BaseSettings):
     # Auto-exit rules — enforced before the LLM/heuristic even sees the symbol.
     stop_loss_pct: float = Field(default=0.05, alias="ASTRA_STOP_LOSS_PCT")
     take_profit_pct: float = Field(default=0.15, alias="ASTRA_TAKE_PROFIT_PCT")
+    trailing_stop_pct: float = Field(default=0.08, alias="ASTRA_TRAILING_STOP_PCT")
     min_confidence: float = Field(default=0.30, alias="ASTRA_MIN_CONFIDENCE")
+
+    # --- Position discipline (the redesign) ---
+    # Concentrated portfolio: hold few, meaningful positions.
+    max_open_positions: int = Field(default=10, alias="ASTRA_MAX_OPEN_POSITIONS")
+    target_position_pct: float = Field(default=0.10, alias="ASTRA_TARGET_POSITION_PCT")
+    # Never place a trade smaller than this dollar value — kills fee-bleed
+    # from micro-trades.
+    min_trade_value: float = Field(default=25.0, alias="ASTRA_MIN_TRADE_VALUE")
+    # After trading a symbol, don't trade it again for this many minutes.
+    cooldown_minutes: int = Field(default=60, alias="ASTRA_COOLDOWN_MINUTES")
+    # Only ENTER a new position when conviction clears this bar.
+    entry_min_confidence: float = Field(default=0.55, alias="ASTRA_ENTRY_MIN_CONFIDENCE")
+    # Risk budget per trade for volatility-based sizing (fraction of equity
+    # lost if the stop-loss is hit).
+    risk_per_trade_pct: float = Field(default=0.02, alias="ASTRA_RISK_PER_TRADE_PCT")
 
     # User-supplied priority watchlist, comma-separated. These symbols always
     # get evaluated first; the rest of the slot count is filled from the

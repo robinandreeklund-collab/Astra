@@ -51,7 +51,16 @@ class EngineState:
         # candidates) — shown on the dashboard so the user can see what the
         # bot considered, not just what it traded.
         self.last_scan: dict[str, Any] = {}
+        # Per-symbol last decision: {bar_ts, action, decided_at}. Used to skip
+        # re-deciding a symbol when the underlying daily data hasn't changed.
+        self.last_decision: dict[str, dict[str, Any]] = {}
+        # Per-symbol last trade timestamp — enforces the cooldown window.
+        self.last_trade_at: dict[str, float] = {}
         self.subscribers: list[asyncio.Queue[TickEvent]] = []
+
+    def in_cooldown(self, symbol: str, cooldown_seconds: float) -> bool:
+        last = self.last_trade_at.get(symbol)
+        return last is not None and (time.time() - last) < cooldown_seconds
 
     def push_signal(self, symbol: str, snapshot: dict[str, Any], keep: int = 3) -> None:
         hist = self.signal_history.setdefault(symbol, [])
@@ -99,6 +108,9 @@ class TradingEngine:
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._universe: list[str] = []
+        # Serialise ticks: the scheduler loop and a manual /api/engine/tick
+        # must never run concurrently or they double-trade the same symbol.
+        self._tick_lock = asyncio.Lock()
 
     async def ensure_universe(self) -> list[str]:
         if self._universe:
@@ -114,6 +126,14 @@ class TradingEngine:
         return watchlist_from_universe(u, settings.watchlist_size, priority=priority)
 
     async def tick(self) -> dict[str, Any]:
+        """Run one decision cycle, serialised so two ticks never overlap."""
+        if self._tick_lock.locked():
+            # A tick is already running — don't queue a duplicate.
+            return {"skipped": True, "reason": "tick already in progress"}
+        async with self._tick_lock:
+            return await self._tick_impl()
+
+    async def _tick_impl(self) -> dict[str, Any]:
         """Run one decision cycle.
 
         When ASTRA_SCAN_UNIVERSE=true (the default), every tick:
@@ -174,8 +194,45 @@ class TradingEngine:
             retriever = MemoryRetriever(self.memory)
             recorder = MemoryRecorder(self.portfolio, self.memory)
 
+            from astra.engine.sizing import atr_pct_from_indicators, compute_buy_value
+            from astra.signals.deltas import compute_deltas
+
             actions: list[dict[str, Any]] = []
             prices: dict[str, float] = {}
+            cooldown_sec = settings.cooldown_minutes * 60
+            open_count = len(await self.portfolio.get_positions())
+
+            # Daily loss guard: if we're down past the limit today, block new
+            # entries for the rest of the day. Exits still run normally.
+            entries_blocked, block_reason = await risk.can_trade_today()
+            entries_blocked = not entries_blocked
+            if entries_blocked:
+                log.info("Entries blocked today: %s", block_reason)
+
+            async def _do_sell(symbol, pos, ref_price, bundle, reasoning, source):
+                """Close 100% of a position. All-or-nothing — no partial sells."""
+                ph, pdesc = bundle.pattern_hash()
+                snap = bundle.to_dict()
+                snap["_pattern_desc"] = pdesc
+                snap["_decision"] = {
+                    "action": "SELL", "size_pct": 1.0, "confidence": 1.0,
+                    "reasoning": reasoning, "source": source,
+                }
+                try:
+                    fill = await broker.sell(symbol, float(pos["qty"]),
+                                             ref_price, snap, reasoning, ph)
+                except NoPosition:
+                    return None
+                self.state.last_trade_at[symbol] = time.time()
+                await self.portfolio.log_thought(symbol, "SELL", 1.0, reasoning)
+                await self.state.broadcast(TickEvent("trade", {
+                    "symbol": symbol, "side": "SELL", "qty": fill.qty,
+                    "price": fill.price, "pnl": fill.pnl, "reasoning": reasoning,
+                }))
+                sell_trade = await self.portfolio.list_trades(limit=1)
+                if sell_trade:
+                    await recorder.record_close(sell_trade[0])
+                return fill
 
             for symbol in symbols:
                 try:
@@ -186,155 +243,182 @@ class TradingEngine:
 
                 quote = bundle.quote or {}
                 ref_price = float(quote.get("c") or 0)
+                tech = bundle.technical or {}
                 if ref_price <= 0:
-                    tech = bundle.technical or {}
                     ref_price = float(tech.get("last_close") or 0)
                 if ref_price <= 0:
                     continue
                 prices[symbol] = ref_price
+                bar_ts = int(tech.get("last_bar_ts") or 0)
 
                 pos = await self.portfolio.get_position(symbol)
 
-                # === Hard exit rules (run BEFORE the model) ===
-                # Stop-loss / take-profit are absolute risk rules; the LLM
-                # cannot override them. We compute them inline so they fire
-                # even when the LLM/heuristic would say HOLD.
-                if pos is not None and ref_price > 0:
+                # ============ HELD POSITION ============
+                if pos is not None:
                     avg = float(pos["avg_price"])
+                    # Track the high-water mark for the trailing stop.
+                    prev_hwm = float(pos.get("high_water_mark") or avg)
+                    hwm = max(prev_hwm, ref_price)
+                    if hwm > prev_hwm:
+                        await self.portfolio.update_high_water_mark(symbol, hwm)
+
                     pct = (ref_price - avg) / avg if avg > 0 else 0.0
+                    drop_from_high = (ref_price - hwm) / hwm if hwm > 0 else 0.0
+
+                    # --- Forced exits: always run, bypass cooldown/LLM ---
                     forced_reason = None
                     if pct <= -settings.stop_loss_pct:
-                        forced_reason = (
-                            f"STOP-LOSS: {pct*100:.1f}% drawdown "
-                            f"(limit -{settings.stop_loss_pct*100:.0f}%)"
-                        )
+                        forced_reason = (f"STOP-LOSS: {pct*100:.1f}% "
+                                         f"(limit -{settings.stop_loss_pct*100:.0f}%)")
                     elif pct >= settings.take_profit_pct:
+                        forced_reason = (f"TAKE-PROFIT: {pct*100:+.1f}% "
+                                         f"(target +{settings.take_profit_pct*100:.0f}%)")
+                    elif (drop_from_high <= -settings.trailing_stop_pct and pct > 0):
                         forced_reason = (
-                            f"TAKE-PROFIT: {pct*100:+.1f}% gain "
-                            f"(target +{settings.take_profit_pct*100:.0f}%)"
+                            f"TRAILING-STOP: {drop_from_high*100:.1f}% off the high "
+                            f"(still +{pct*100:.1f}% vs entry)"
                         )
                     if forced_reason:
-                        ph, pdesc = bundle.pattern_hash()
-                        snap = bundle.to_dict()
-                        snap["_pattern_desc"] = pdesc
-                        snap["_decision"] = {
-                            "action": "SELL", "size_pct": 1.0,
-                            "confidence": 1.0, "reasoning": forced_reason,
-                            "source": "forced",
-                        }
-                        try:
-                            fill = await broker.sell(symbol, float(pos["qty"]),
-                                                     ref_price, snap, forced_reason, ph)
+                        fill = await _do_sell(symbol, pos, ref_price, bundle,
+                                              forced_reason, "forced")
+                        if fill:
+                            open_count -= 1
                             actions.append({"symbol": symbol, "action": "SELL",
                                             "qty": fill.qty, "price": fill.price,
                                             "pnl": fill.pnl, "forced": True})
-                            await self.portfolio.log_thought(
-                                symbol, "SELL", 1.0, forced_reason
-                            )
-                            await self.state.broadcast(TickEvent("trade", {
-                                "symbol": symbol, "side": "SELL", "qty": fill.qty,
-                                "price": fill.price, "pnl": fill.pnl,
-                                "reasoning": forced_reason,
-                            }))
-                            sell_trade = await self.portfolio.list_trades(limit=1)
-                            if sell_trade:
-                                await recorder.record_close(sell_trade[0])
-                        except NoPosition:
-                            pass
-                        continue  # skip LLM call for this symbol
+                        continue
 
-                # === Build prompt with tick-over-tick deltas ===
-                from astra.signals.deltas import compute_deltas
-                prior_snapshots = self.state.signal_history.get(symbol, [])
-                prior_snap = prior_snapshots[0] if prior_snapshots else None
+                    # --- Cooldown: just hold, don't re-evaluate ---
+                    if self.state.in_cooldown(symbol, cooldown_sec):
+                        actions.append({"symbol": symbol, "action": "HOLD",
+                                        "reason": "cooldown"})
+                        continue
+
+                    # --- Signal dedup: same daily bar as last decision → hold ---
+                    prev_dec = self.state.last_decision.get(symbol)
+                    if prev_dec and prev_dec.get("bar_ts") == bar_ts and bar_ts > 0:
+                        actions.append({"symbol": symbol, "action": "HOLD",
+                                        "reason": "no new data"})
+                        continue
+
+                    # --- Ask the model: EXIT or HOLD? ---
+                    prior = self.state.signal_history.get(symbol, [])
+                    bundle_dict = bundle.to_dict()
+                    bundle_dict["_deltas"] = compute_deltas(
+                        bundle_dict, prior[0] if prior else None)
+                    lessons, patterns = await retriever.for_decision(
+                        bundle.pattern_hash()[0])
+                    decision = await decider.decide(
+                        bundle_dict, pos, 0.0, lessons, patterns, mode="exit")
+                    self.state.push_signal(symbol, bundle_dict)
+                    self.state.last_decision[symbol] = {
+                        "bar_ts": bar_ts, "action": decision.action,
+                        "decided_at": time.time()}
+                    await self.portfolio.log_thought(
+                        symbol, decision.action, decision.confidence,
+                        decision.reasoning[:1000])
+                    await self.state.broadcast(TickEvent("thought", {
+                        "symbol": symbol, "action": decision.action,
+                        "confidence": decision.confidence,
+                        "reasoning": decision.reasoning, "source": decision.source,
+                        "ref_price": ref_price}))
+
+                    if decision.action == "SELL":
+                        fill = await _do_sell(symbol, pos, ref_price, bundle,
+                                              decision.reasoning, decision.source)
+                        if fill:
+                            open_count -= 1
+                            actions.append({"symbol": symbol, "action": "SELL",
+                                            "qty": fill.qty, "price": fill.price,
+                                            "pnl": fill.pnl})
+                    else:
+                        actions.append({"symbol": symbol, "action": "HOLD"})
+                    continue
+
+                # ============ FLAT (no position) ============
+                # --- Daily loss limit: no new entries ---
+                if entries_blocked:
+                    continue
+                # --- Cooldown ---
+                if self.state.in_cooldown(symbol, cooldown_sec):
+                    continue
+                # --- Concentration cap ---
+                if open_count >= settings.max_open_positions:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": "portfolio full"})
+                    continue
+                # --- Signal dedup: already passed on this bar → skip ---
+                prev_dec = self.state.last_decision.get(symbol)
+                if (prev_dec and prev_dec.get("bar_ts") == bar_ts and bar_ts > 0
+                        and prev_dec.get("action") != "BUY"):
+                    continue
+
+                prior = self.state.signal_history.get(symbol, [])
                 bundle_dict = bundle.to_dict()
-                bundle_dict["_deltas"] = compute_deltas(bundle_dict, prior_snap)
-
+                bundle_dict["_deltas"] = compute_deltas(
+                    bundle_dict, prior[0] if prior else None)
                 lessons, patterns = await retriever.for_decision(
-                    bundle.pattern_hash()[0]
-                )
+                    bundle.pattern_hash()[0])
                 acc = await self.portfolio.get_account()
-                cash = acc["cash"] if acc else 0.0
+                cash = float(acc["cash"]) if acc else 0.0
 
                 decision = await decider.decide(
-                    bundle_dict, pos, cash, lessons, patterns
-                )
-
+                    bundle_dict, None, cash, lessons, patterns, mode="entry")
                 pattern_hash, pattern_desc = bundle.pattern_hash()
-                snapshot = bundle_dict
-                snapshot["_pattern_desc"] = pattern_desc
-                snapshot["_decision"] = decision.to_dict()
-                # Store this snapshot so the next tick can diff against it.
+                bundle_dict["_pattern_desc"] = pattern_desc
+                bundle_dict["_decision"] = decision.to_dict()
                 self.state.push_signal(symbol, bundle_dict)
-
+                self.state.last_decision[symbol] = {
+                    "bar_ts": bar_ts, "action": decision.action,
+                    "decided_at": time.time()}
                 await self.portfolio.log_thought(
-                    symbol=symbol,
-                    action=decision.action,
-                    confidence=decision.confidence,
-                    reasoning=decision.reasoning[:1000],
-                )
-
+                    symbol, decision.action, decision.confidence,
+                    decision.reasoning[:1000])
                 await self.state.broadcast(TickEvent("thought", {
-                    "symbol": symbol,
-                    "action": decision.action,
+                    "symbol": symbol, "action": decision.action,
                     "confidence": decision.confidence,
-                    "reasoning": decision.reasoning,
-                    "source": decision.source,
-                    "ref_price": ref_price,
-                }))
+                    "reasoning": decision.reasoning, "source": decision.source,
+                    "ref_price": ref_price}))
 
-                if decision.action == "BUY" and pos is None:
-                    qty = await risk.size_buy(ref_price, decision.confidence * decision.size_pct)
-                    if qty <= 0:
-                        actions.append({"symbol": symbol, "action": "SKIP", "reason": "size=0"})
-                        continue
-                    ok, why = await risk.validate_buy(symbol, qty, ref_price)
-                    if not ok:
-                        actions.append({"symbol": symbol, "action": "SKIP", "reason": why})
-                        await self.portfolio.log_thought(symbol, "SKIP", decision.confidence,
-                                                         f"risk-blocked: {why}", accepted=False)
-                        continue
-                    try:
-                        fill = await broker.buy(symbol, qty, ref_price, snapshot,
-                                                decision.reasoning, pattern_hash)
-                    except InsufficientCash as e:
-                        actions.append({"symbol": symbol, "action": "SKIP", "reason": str(e)})
-                        continue
-                    actions.append({"symbol": symbol, "action": "BUY",
-                                    "qty": fill.qty, "price": fill.price})
-                    await self.state.broadcast(TickEvent("trade", {
-                        "symbol": symbol, "side": "BUY", "qty": fill.qty,
-                        "price": fill.price, "reasoning": decision.reasoning,
-                    }))
-
-                elif decision.action == "SELL" and pos is not None:
-                    qty = pos["qty"] * decision.size_pct if 0 < decision.size_pct <= 1 else pos["qty"]
-                    qty = round(qty, 4)
-                    if qty <= 0:
-                        qty = pos["qty"]
-                    ok, why = await risk.validate_sell(symbol, qty)
-                    if not ok:
-                        actions.append({"symbol": symbol, "action": "SKIP", "reason": why})
-                        continue
-                    try:
-                        fill = await broker.sell(symbol, qty, ref_price, snapshot,
-                                                 decision.reasoning, pattern_hash)
-                    except NoPosition as e:
-                        actions.append({"symbol": symbol, "action": "SKIP", "reason": str(e)})
-                        continue
-                    actions.append({"symbol": symbol, "action": "SELL",
-                                    "qty": fill.qty, "price": fill.price, "pnl": fill.pnl})
-                    await self.state.broadcast(TickEvent("trade", {
-                        "symbol": symbol, "side": "SELL", "qty": fill.qty,
-                        "price": fill.price, "pnl": fill.pnl,
-                        "reasoning": decision.reasoning,
-                    }))
-                    # Record pattern outcome
-                    sell_trade = await self.portfolio.list_trades(limit=1)
-                    if sell_trade:
-                        await recorder.record_close(sell_trade[0])
-                else:
+                # --- Entry requires real conviction ---
+                if decision.action != "BUY":
                     actions.append({"symbol": symbol, "action": "HOLD"})
+                    continue
+                if decision.confidence < settings.entry_min_confidence:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": f"confidence {decision.confidence:.2f} "
+                                              f"< {settings.entry_min_confidence}"})
+                    continue
+
+                # --- Volatility-based sizing ---
+                equity_pts = await self.portfolio.equity_history(limit=1)
+                equity = equity_pts[-1]["equity"] if equity_pts else cash
+                atr_pct = atr_pct_from_indicators(tech)
+                value = compute_buy_value(
+                    equity, cash, decision.confidence * max(0.5, decision.size_pct),
+                    atr_pct, settings)
+                if value < settings.min_trade_value:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": f"trade ${value:.0f} < "
+                                              f"min ${settings.min_trade_value:.0f}"})
+                    continue
+                qty = round(value / ref_price, 6)
+                if qty <= 0:
+                    continue
+                try:
+                    fill = await broker.buy(symbol, qty, ref_price, bundle_dict,
+                                            decision.reasoning, pattern_hash)
+                except InsufficientCash as e:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": str(e)})
+                    continue
+                self.state.last_trade_at[symbol] = time.time()
+                open_count += 1
+                actions.append({"symbol": symbol, "action": "BUY",
+                                "qty": fill.qty, "price": fill.price})
+                await self.state.broadcast(TickEvent("trade", {
+                    "symbol": symbol, "side": "BUY", "qty": fill.qty,
+                    "price": fill.price, "reasoning": decision.reasoning}))
 
             if llm_ok:
                 await llm.close()

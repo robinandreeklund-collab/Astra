@@ -59,12 +59,27 @@ def build_decision_user_prompt(
     cash: float,
     lessons: list[str],
     pattern_stats: list[dict[str, Any]],
+    mode: str = "entry",
 ) -> str:
     parts: list[str] = []
     sym = bundle_dict.get("symbol")
     quote = bundle_dict.get("quote") or {}
     tech = bundle_dict.get("technical") or {}
     last_price = quote.get("c") or tech.get("last_close")
+
+    # Mode header tells the model exactly what choice it's making.
+    if mode == "exit":
+        parts.append(
+            "TASK: You HOLD this position. Decide SELL (close 100%) or HOLD. "
+            "A BUY is not possible. Choose SELL if the thesis has weakened, "
+            "momentum reversed, or the position looks exhausted."
+        )
+    else:
+        parts.append(
+            "TASK: You are FLAT on this stock. Decide BUY (open a new position) "
+            "or HOLD (pass). Only BUY on a genuinely attractive setup — you do "
+            "not have to trade. A SELL is not possible."
+        )
 
     parts.append(f"SYMBOL: {sym}   PRICE: ${_fmt_num(last_price)}   CASH: ${cash:,.0f}")
     if position:

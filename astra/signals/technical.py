@@ -100,9 +100,15 @@ def compute_indicators(candles: list[dict[str, Any]]) -> dict[str, Any]:
     last_vol = float(df["volume"].iloc[-1]) if "volume" in df.columns and len(df) > 0 else 0.0
     vol_ratio = (last_vol / avg_vol) if avg_vol > 0 else None
 
+    try:
+        last_bar_ts = int(df["ts"].iloc[-1].timestamp())
+    except Exception:
+        last_bar_ts = 0
+
     return {
         "available": True,
         "bars": int(len(df)),
+        "last_bar_ts": last_bar_ts,
         "last_close": last_close,
         "rsi14": _safe_float(rsi14.iloc[last]),
         "macd_state": macd_state,

@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS positions (
     symbol TEXT PRIMARY KEY,
     qty REAL NOT NULL,
     avg_price REAL NOT NULL,
-    opened_at TEXT NOT NULL
+    opened_at TEXT NOT NULL,
+    high_water_mark REAL
 );
 
 CREATE TABLE IF NOT EXISTS trades (
@@ -71,6 +72,14 @@ class PortfolioDB(SQLiteDB):
 
     async def init(self) -> None:
         await self.init_schema(SCHEMA)
+        # Migration: add high_water_mark to pre-existing positions tables.
+        async with self.session() as conn:
+            cols = await (await conn.execute("PRAGMA table_info(positions)")).fetchall()
+            names = {c["name"] for c in cols}
+            if "high_water_mark" not in names:
+                await conn.execute(
+                    "ALTER TABLE positions ADD COLUMN high_water_mark REAL"
+                )
 
     # ---- account ----
 
@@ -108,12 +117,25 @@ class PortfolioDB(SQLiteDB):
             ).fetchone()
             return dict(row) if row else None
 
-    async def upsert_position(self, symbol: str, qty: float, avg_price: float) -> None:
+    async def upsert_position(
+        self, symbol: str, qty: float, avg_price: float,
+        high_water_mark: float | None = None,
+    ) -> None:
+        async with self.session() as conn:
+            hwm = high_water_mark if high_water_mark is not None else avg_price
+            await conn.execute(
+                "INSERT INTO positions(symbol, qty, avg_price, opened_at, high_water_mark) "
+                "VALUES(?,?,?,?,?) "
+                "ON CONFLICT(symbol) DO UPDATE SET qty=excluded.qty, "
+                "avg_price=excluded.avg_price",
+                (symbol, qty, avg_price, _now(), hwm),
+            )
+
+    async def update_high_water_mark(self, symbol: str, hwm: float) -> None:
         async with self.session() as conn:
             await conn.execute(
-                "INSERT INTO positions(symbol, qty, avg_price, opened_at) VALUES(?,?,?,?) "
-                "ON CONFLICT(symbol) DO UPDATE SET qty=excluded.qty, avg_price=excluded.avg_price",
-                (symbol, qty, avg_price, _now()),
+                "UPDATE positions SET high_water_mark=? WHERE symbol=?",
+                (hwm, symbol),
             )
 
     async def delete_position(self, symbol: str) -> None:

@@ -22,6 +22,17 @@ def isolate_settings():
     yield
 
 
+@pytest.fixture(autouse=True)
+def reset_settings():
+    """Snapshot the global Settings before each test and restore it after,
+    so tests that tweak settings.* don't leak config into each other."""
+    from astra.config import settings
+    snapshot = settings.model_dump()
+    yield
+    for key, value in snapshot.items():
+        setattr(settings, key, value)
+
+
 @pytest_asyncio.fixture
 async def portfolio_db(tmp_path):
     from astra.db.portfolio import PortfolioDB

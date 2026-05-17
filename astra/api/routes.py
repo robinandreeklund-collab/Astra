@@ -72,6 +72,46 @@ def build_router(app: FastAPI) -> APIRouter:
     async def backtest_page(request: Request):
         return templates.TemplateResponse(request, "backtest.html", {})
 
+    @r.get("/training", response_class=HTMLResponse)
+    async def training_page(request: Request):
+        return templates.TemplateResponse(
+            request, "training.html",
+            {"status": app.state.training_status},
+        )
+
+    @r.post("/api/train")
+    async def api_train(symbols: str = Form(""), starting_balance: float = Form(100000)):
+        st = app.state.training_status
+        if st.get("running"):
+            return {"ok": False, "error": "training already running"}
+        from astra.data.universe import FALLBACK_SP500, parse_custom_watchlist
+        syms = parse_custom_watchlist(symbols) or list(FALLBACK_SP500)
+        st.clear()
+        st.update({"running": True, "message": "starting…", "result": None})
+
+        async def _run() -> None:
+            from astra.engine.trainer import run_training
+            try:
+                def _progress(m: str) -> None:
+                    st["message"] = m
+                result = await run_training(
+                    syms, starting_balance, memory, cache, progress=_progress)
+                st["result"] = result
+                st["message"] = "complete" if result.get("ok") else result.get("error", "failed")
+            except Exception as e:
+                log.exception("training failed")
+                st["message"] = f"error: {e}"
+                st["result"] = {"ok": False, "error": str(e)}
+            finally:
+                st["running"] = False
+
+        asyncio.create_task(_run())
+        return {"ok": True, "started": True, "symbols": len(syms)}
+
+    @r.get("/api/train/status")
+    async def api_train_status():
+        return app.state.training_status
+
     @r.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         acc = await portfolio.get_account()

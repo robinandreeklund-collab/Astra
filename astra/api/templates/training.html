@@ -1,0 +1,105 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Training{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Walk-forward training</h2>
+  <p class="muted small">
+    Replays years of real daily data so the per-stock profiles accumulate
+    experience <strong>before</strong> the bot trades live. History is split
+    into a TRAIN window (profiles learn, then persist to memory) and a
+    VALIDATE window (profiles frozen, measured on unseen data). The
+    train-vs-validate gap exposes overfitting. Trained profiles survive
+    portfolio resets.
+  </p>
+  <form id="train-form" class="row">
+    <label>Symbols (blank = full S&P 500 list)
+      <input type="text" name="symbols" value="" placeholder="AAPL,MSFT,NVDA,…" />
+    </label>
+    <label>Starting balance
+      <input type="number" name="starting_balance" value="100000" min="1000" step="1000" />
+    </label>
+    <button type="submit" class="btn primary">Run training</button>
+  </form>
+  <p class="muted small" id="train-status"></p>
+</section>
+
+<section class="card" id="train-result" style="display:none;">
+  <h2>Result</h2>
+  <div id="train-summary"></div>
+</section>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('train-form');
+  const status = document.getElementById('train-status');
+  const resultDiv = document.getElementById('train-result');
+  const summary = document.getElementById('train-summary');
+  let poll = null;
+
+  function fmtReport(r) {
+    return `
+      <table class="table" style="max-width:420px;">
+        <tr><td>Return</td><td>${r.return_pct.toFixed(2)}%</td></tr>
+        <tr><td>CAGR</td><td>${r.cagr_pct.toFixed(2)}%</td></tr>
+        <tr><td>Max drawdown</td><td>${r.max_drawdown_pct.toFixed(2)}%</td></tr>
+        <tr><td>Sharpe</td><td>${r.sharpe.toFixed(2)}</td></tr>
+        <tr><td>Sortino</td><td>${r.sortino.toFixed(2)}</td></tr>
+        <tr><td>Calmar</td><td>${r.calmar.toFixed(2)}</td></tr>
+        <tr><td>Win rate</td><td>${(r.win_rate*100).toFixed(0)}%</td></tr>
+        <tr><td>Profit factor</td><td>${r.profit_factor.toFixed(2)}</td></tr>
+        <tr><td>Closed trades</td><td>${r.closed_trades}</td></tr>
+      </table>`;
+  }
+
+  function showResult(res) {
+    if (!res) return;
+    if (!res.ok) {
+      summary.innerHTML = '<p class="muted">Training failed: ' + (res.error||'') + '</p>';
+      resultDiv.style.display = 'block';
+      return;
+    }
+    summary.innerHTML = `
+      <div class="kpis">
+        <div><strong>${res.profiles_built}</strong><span>Profiles built</span></div>
+        <div><strong>${res.symbols}</strong><span>Symbols</span></div>
+        <div><strong>${res.overfitting_gap_pct.toFixed(1)}%</strong><span>Overfitting gap</span></div>
+      </div>
+      <div class="grid-2">
+        <div><h3>Train window (profiles learning)</h3>${fmtReport(res.train)}</div>
+        <div><h3>Validate window (frozen, unseen)</h3>${fmtReport(res.validate)}</div>
+      </div>
+      <p class="muted small">A large positive overfitting gap means the
+      profiles fit the training period but don't generalise — treat the
+      VALIDATE numbers as the honest expectation.</p>`;
+    resultDiv.style.display = 'block';
+  }
+
+  async function checkStatus() {
+    try {
+      const r = await fetch('/api/train/status');
+      const d = await r.json();
+      status.textContent = (d.running ? '⏳ ' : '') + (d.message || '');
+      if (!d.running) {
+        if (poll) { clearInterval(poll); poll = null; }
+        showResult(d.result);
+      }
+    } catch (e) {}
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    status.textContent = 'Starting…';
+    resultDiv.style.display = 'none';
+    const r = await fetch('/api/train', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!d.ok) { status.textContent = d.error || 'failed to start'; return; }
+    if (poll) clearInterval(poll);
+    poll = setInterval(checkStatus, 1500);
+    checkStatus();
+  });
+
+  checkStatus();
+});
+</script>
+{% endblock %}

@@ -53,6 +53,7 @@ def create_app() -> FastAPI:
     app.state.cache = cache
     app.state.engine = engine
     app.state.engine_state = state
+    app.state.training_status = {"running": False, "message": "", "result": None}
     app.state.templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
     if STATIC_DIR.exists():

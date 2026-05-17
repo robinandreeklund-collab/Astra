@@ -164,6 +164,16 @@ def build_decision_user_prompt(
             f"{cs.get('rel_strength', 0):+.1f}% vs market)"
         )
 
+    # Contextual bandit — the policy model's learned read of this context.
+    ps = bundle_dict.get("_policy_score")
+    if isinstance(ps, (int, float)):
+        verdict = ("favourable" if ps > 0.2 else
+                   "unfavourable" if ps < -0.2 else "neutral")
+        parts.append(
+            f"POLICY MODEL: {verdict} — expected {ps:+.2f}R in this "
+            f"signal/regime context (learned across all stocks)"
+        )
+
     # Tick-over-tick changes — high-signal block for the model
     deltas = bundle_dict.get("_deltas") or {}
     if deltas.get("available"):

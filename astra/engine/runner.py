@@ -174,6 +174,10 @@ class TradingEngine:
         global_profile = await load_global(self.memory)
         global_rates = all_global_rates(global_profile)
 
+        # Load the contextual bandit (the cross-universe policy model).
+        from astra.engine.contextual_bandit import extract_features, load_bandit
+        bandit = await load_bandit(self.memory)
+
         if settings.scan_universe and universe:
             from astra.engine.scanner import scan_universe
             # Pass the prior snapshots so the scanner can weight momentum,
@@ -429,6 +433,13 @@ class TradingEngine:
                 lessons, patterns = await retriever.for_decision(
                     bundle.pattern_hash()[0])
 
+                # Contextual bandit: the cross-universe policy model's
+                # Thompson-sampled estimate of this context's reward (in R).
+                features = extract_features(bundle_dict, profile, regime)
+                policy_score = bandit.sample_predict(features)
+                bundle_dict["_policy_score"] = policy_score
+                bundle_dict["_bandit_features"] = features
+
                 decision = await decider.decide(
                     bundle_dict, None, cash, lessons, patterns, mode="entry",
                     profile_card=profile.card(global_rates))
@@ -464,12 +475,21 @@ class TradingEngine:
                                     "reason": "stock benched (poor track record)"})
                     continue
 
-                # --- Sizing: volatility × per-stock conviction × regime ---
+                # --- Policy model: skip contexts it has learned to avoid ---
+                if policy_score < -0.8:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": f"policy model: expected "
+                                              f"{policy_score:+.2f}R in this context"})
+                    continue
+
+                # --- Sizing: volatility × conviction × regime × policy ---
+                bandit_factor = max(0.3, min(1.4, 0.6 + 0.5 * policy_score))
                 atr_pct = atr_pct_from_indicators(tech)
                 value = compute_buy_value(
                     equity, cash, decision.confidence * max(0.5, decision.size_pct),
                     atr_pct, settings,
-                    conviction_multiplier=profile.conviction_multiplier() * regime_mult)
+                    conviction_multiplier=(profile.conviction_multiplier()
+                                           * regime_mult * bandit_factor))
 
                 # Whole shares only — floor the budget to an integer share count.
                 qty = int(value // ref_price)

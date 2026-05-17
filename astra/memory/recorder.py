@@ -99,6 +99,15 @@ class MemoryRecorder:
                 win, pnl, hold_minutes, entry_signals, r_multiple)
             await save_profile(self.memory, global_profile)
 
+        # Contextual bandit: update the policy model with the entry context
+        # features and the realized R-multiple reward.
+        features = entry_snapshot.get("_bandit_features")
+        if isinstance(features, list) and features:
+            from astra.engine.contextual_bandit import load_bandit, save_bandit
+            bandit = await load_bandit(self.memory)
+            bandit.update(features, r_multiple)
+            await save_bandit(self.memory, bandit)
+
     @staticmethod
     def _r_multiple(
         opening: dict[str, Any] | None,

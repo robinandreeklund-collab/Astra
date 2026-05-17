@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS stock_profiles (
     data TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS models (
+    key TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -274,3 +280,24 @@ class MemoryDB(SQLiteDB):
                 except Exception:
                     continue
             return out
+
+    # ---- generic model store (contextual bandit, etc.) ----
+
+    async def get_model(self, key: str) -> dict[str, Any] | None:
+        async with self.session() as conn:
+            row = await (
+                await conn.execute("SELECT data FROM models WHERE key=?", (key,))
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                return json.loads(row["data"])
+            except Exception:
+                return None
+
+    async def save_model(self, key: str, data: dict[str, Any]) -> None:
+        async with self.session() as conn:
+            await conn.execute(
+                "INSERT OR REPLACE INTO models(key, data, updated_at) VALUES(?,?,?)",
+                (key, json.dumps(data), _now()),
+            )

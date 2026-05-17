@@ -107,8 +107,9 @@ def _replay_window(
     profiles: dict[str, StockProfile],
     starting: float,
     learn: bool,
+    bandit: Any = None,
 ) -> _Portfolio:
-    """Replay one window. When learn=True, profiles are updated by outcomes."""
+    """Replay one window. When learn=True, profiles + bandit are updated."""
     pf = _Portfolio(starting)
     # Pre-index each symbol's candles by timestamp for trailing lookups.
     by_ts: dict[str, dict[int, int]] = {
@@ -148,6 +149,9 @@ def _replay_window(
                     rec = pf.sell(sym, last_close, day)
                     if rec and learn:
                         _learn(profiles, sym, rec)
+                        feats = pos.get("features")
+                        if bandit is not None and feats:
+                            bandit.update(feats, rec.get("r_multiple", 0.0))
                 continue
 
             # Flat — entry decision
@@ -168,6 +172,10 @@ def _replay_window(
                 continue
             signals = extract_signals({"technical": tech})
             pf.buy(sym, qty, last_close, signals, day, stop_pct)
+            if bandit is not None and sym in pf.positions:
+                from astra.engine.contextual_bandit import extract_features
+                pf.positions[sym]["features"] = extract_features(
+                    {"technical": tech}, prof, None)
 
         pf.equity_curve.append(pf.equity(prices))
 
@@ -259,10 +267,13 @@ async def run_training(
     _say(f"{len(train_ts)} train days, {len(validate_ts)} validate days")
 
     profiles: dict[str, StockProfile] = {}
+    from astra.engine.contextual_bandit import LinTS, save_bandit
+    bandit = LinTS()
 
-    # --- TRAIN: profiles learn ---
-    _say("replaying train window (profiles learning)…")
-    train_pf = _replay_window(history, train_ts, profiles, starting_balance, learn=True)
+    # --- TRAIN: profiles + policy bandit learn ---
+    _say("replaying train window (profiles + policy model learning)…")
+    train_pf = _replay_window(history, train_ts, profiles, starting_balance,
+                              learn=True, bandit=bandit)
 
     # Character from full history.
     for sym, rows in history.items():
@@ -277,9 +288,10 @@ async def run_training(
         history, validate_ts, frozen, starting_balance, learn=False)
 
     if persist:
-        _say("persisting trained profiles to memory.db…")
+        _say("persisting trained profiles + policy model to memory.db…")
         for prof in profiles.values():
             await save_profile(memory, prof)
+        await save_bandit(memory, bandit)
 
     train_report = full_report(
         train_pf.equity_curve, train_pf.trades, starting_balance)
@@ -291,6 +303,7 @@ async def run_training(
         "ok": True,
         "symbols": len(history),
         "profiles_built": len([p for p in profiles if p != GLOBAL_SYMBOL]),
+        "bandit_updates": bandit.updates,
         "train": train_report,
         "validate": validate_report,
         "overfitting_gap_pct": train_report["return_pct"] - validate_report["return_pct"],

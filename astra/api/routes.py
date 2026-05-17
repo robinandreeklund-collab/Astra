@@ -158,6 +158,15 @@ def build_router(app: FastAPI) -> APIRouter:
             request, "profiles.html", {"profiles": rows},
         )
 
+    @r.get("/experts", response_class=HTMLResponse)
+    async def experts_page(request: Request):
+        from astra.engine.ensemble import load_ensemble
+        ensemble = await load_ensemble(memory)
+        return templates.TemplateResponse(
+            request, "experts.html",
+            {"weights": ensemble.regime_table(), "updates": ensemble.updates},
+        )
+
     @r.get("/api/profiles")
     async def api_profiles():
         from astra.profiles import GLOBAL_SYMBOL, load_all_profiles

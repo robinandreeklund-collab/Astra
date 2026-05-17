@@ -174,6 +174,18 @@ def build_decision_user_prompt(
             f"signal/regime context (learned across all stocks)"
         )
 
+    # Expert ensemble — regime-weighted vote of the strategy experts.
+    ens = bundle_dict.get("_ensemble") or {}
+    if ens:
+        buyers = [n for n, v in (ens.get("experts") or {}).items()
+                  if v.get("action") == "BUY"]
+        parts.append(
+            f"EXPERT ENSEMBLE: {ens.get('action')} "
+            f"(consensus {ens.get('consensus', 0):+.2f}, "
+            f"{len(buyers)}/{len(ens.get('experts') or {})} experts buy"
+            + (f": {', '.join(buyers)}" if buyers else "") + ")"
+        )
+
     # Tick-over-tick changes — high-signal block for the model
     deltas = bundle_dict.get("_deltas") or {}
     if deltas.get("available"):

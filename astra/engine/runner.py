@@ -178,6 +178,11 @@ class TradingEngine:
         from astra.engine.contextual_bandit import extract_features, load_bandit
         bandit = await load_bandit(self.memory)
 
+        # Load the expert ensemble (regime-weighted strategy votes).
+        from astra.engine.ensemble import load_ensemble
+        from astra.engine.experts import run_experts
+        ensemble = await load_ensemble(self.memory)
+
         if settings.scan_universe and universe:
             from astra.engine.scanner import scan_universe
             # Pass the prior snapshots so the scanner can weight momentum,
@@ -440,6 +445,18 @@ class TradingEngine:
                 bundle_dict["_policy_score"] = policy_score
                 bundle_dict["_bandit_features"] = features
 
+                # Expert ensemble: regime-weighted vote of the strategy experts.
+                regime_name = regime.get("regime", "unknown")
+                expert_votes = run_experts(bundle_dict)
+                ensemble_vote = ensemble.combine(expert_votes, regime_name)
+                bundle_dict["_ensemble"] = {
+                    **ensemble_vote,
+                    "experts": {n: v.to_dict() for n, v in expert_votes.items()},
+                }
+                bundle_dict["_expert_votes"] = {
+                    n: v.action for n, v in expert_votes.items()}
+                bundle_dict["_entry_regime"] = regime_name
+
                 decision = await decider.decide(
                     bundle_dict, None, cash, lessons, patterns, mode="entry",
                     profile_card=profile.card(global_rates))
@@ -482,14 +499,24 @@ class TradingEngine:
                                               f"{policy_score:+.2f}R in this context"})
                     continue
 
-                # --- Sizing: volatility × conviction × regime × policy ---
+                # --- Expert ensemble veto: strong disagreement skips entry ---
+                consensus = ensemble_vote["consensus"]
+                if consensus < -0.5:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": f"expert ensemble against "
+                                              f"(consensus {consensus:+.2f})"})
+                    continue
+
+                # --- Sizing: volatility × conviction × regime × policy × ensemble ---
                 bandit_factor = max(0.3, min(1.4, 0.6 + 0.5 * policy_score))
+                ensemble_factor = max(0.4, min(1.3, 0.7 + 0.4 * consensus))
                 atr_pct = atr_pct_from_indicators(tech)
                 value = compute_buy_value(
                     equity, cash, decision.confidence * max(0.5, decision.size_pct),
                     atr_pct, settings,
                     conviction_multiplier=(profile.conviction_multiplier()
-                                           * regime_mult * bandit_factor))
+                                           * regime_mult * bandit_factor
+                                           * ensemble_factor))
 
                 # Whole shares only — floor the budget to an integer share count.
                 qty = int(value // ref_price)

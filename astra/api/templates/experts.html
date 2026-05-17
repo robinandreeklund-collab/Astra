@@ -1,0 +1,41 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Experts{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Expert ensemble
+    <span class="muted small">— {{ updates }} weight updates</span>
+  </h2>
+  <p class="muted small">
+    Four strategy experts (momentum, mean-reversion, trend, breakout) vote
+    on every entry. Their votes are weighted by how well each has performed
+    <strong>in the current market regime</strong> — a Hedge / multiplicative-
+    weights meta-learner. Winners in a regime accumulate weight, losers
+    decay: that is the champion-challenger mechanism. Weights survive resets.
+  </p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Regime</th>
+        <th>Momentum</th><th>Mean-reversion</th><th>Trend</th><th>Breakout</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for regime, w in weights.items() %}
+      {% if regime != "unknown" %}
+      <tr>
+        <td><strong class="regime-{{ regime }}">{{ regime }}</strong></td>
+        <td>{{ "%.2f"|format(w.momentum) }}</td>
+        <td>{{ "%.2f"|format(w.mean_reversion) }}</td>
+        <td>{{ "%.2f"|format(w.trend) }}</td>
+        <td>{{ "%.2f"|format(w.breakout) }}</td>
+      </tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted small">
+    A weight of 1.00 is neutral (the starting value). Higher = that expert
+    has been right more often in that regime and gets more say.
+  </p>
+</section>
+{% endblock %}

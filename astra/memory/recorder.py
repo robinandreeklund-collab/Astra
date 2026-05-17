@@ -108,6 +108,16 @@ class MemoryRecorder:
             bandit.update(features, r_multiple)
             await save_bandit(self.memory, bandit)
 
+        # Expert ensemble: Hedge update — reward experts that voted BUY on
+        # this entry by the realized R, within the entry's regime.
+        expert_votes = entry_snapshot.get("_expert_votes")
+        entry_regime = entry_snapshot.get("_entry_regime", "unknown")
+        if isinstance(expert_votes, dict) and expert_votes:
+            from astra.engine.ensemble import load_ensemble, save_ensemble
+            ensemble = await load_ensemble(self.memory)
+            ensemble.update(expert_votes, str(entry_regime), r_multiple)
+            await save_ensemble(self.memory, ensemble)
+
     @staticmethod
     def _r_multiple(
         opening: dict[str, Any] | None,

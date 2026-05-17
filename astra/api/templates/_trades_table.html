@@ -11,7 +11,7 @@
         <span class="badge {{ t.side|lower }}">{{ t.side }}</span>
         {% if forced %}<span class="badge forced" title="{{ reasoning }}">AUTO</span>{% endif %}
       </td>
-      <td>{{ "%.4f"|format(t.qty) }}</td>
+      <td>{{ "%.0f"|format(t.qty) }}</td>
       <td>${{ "%.2f"|format(t.price) }}</td>
       <td>{% if t.pnl is not none %}${{ "%.2f"|format(t.pnl) }}{% else %}—{% endif %}</td>
       <td class="muted small">{{ reasoning[:80] }}</td>

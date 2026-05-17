@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <td class="muted">${t.ts.slice(0,10)}</td>
           <td><strong>${t.symbol}</strong></td>
           <td><span class="badge ${t.side.toLowerCase()}">${t.side}</span></td>
-          <td>${t.qty.toFixed(4)}</td>
+          <td>${t.qty.toFixed(0)}</td>
           <td>$${t.price.toFixed(2)}</td>
           <td>${t.pnl !== undefined ? '$'+t.pnl.toFixed(2) : '—'}</td>
         </tr>`).join('');

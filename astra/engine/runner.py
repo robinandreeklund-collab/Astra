@@ -380,6 +380,25 @@ class TradingEngine:
                     actions.append({"symbol": symbol, "action": "SKIP",
                                     "reason": "portfolio full"})
                     continue
+
+                # --- Whole-share affordability (Avanza: no fractional shares) ---
+                # Skip unbuyable names BEFORE spending an LLM call on them.
+                acc = await self.portfolio.get_account()
+                cash = float(acc["cash"]) if acc else 0.0
+                equity_pts = await self.portfolio.equity_history(limit=1)
+                equity = equity_pts[-1]["equity"] if equity_pts else cash
+                max_position_value = equity * settings.max_position_pct
+                if ref_price > max_position_value:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": f"1 share ${ref_price:.0f} > position "
+                                              f"cap ${max_position_value:.0f}"})
+                    continue
+                if ref_price + settings.min_fee > cash:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": f"1 share ${ref_price:.0f} unaffordable "
+                                              f"(cash ${cash:.0f})"})
+                    continue
+
                 # --- Signal dedup: already passed on this bar → skip ---
                 prev_dec = self.state.last_decision.get(symbol)
                 if (prev_dec and prev_dec.get("bar_ts") == bar_ts and bar_ts > 0
@@ -392,8 +411,6 @@ class TradingEngine:
                     bundle_dict, prior[0] if prior else None)
                 lessons, patterns = await retriever.for_decision(
                     bundle.pattern_hash()[0])
-                acc = await self.portfolio.get_account()
-                cash = float(acc["cash"]) if acc else 0.0
 
                 decision = await decider.decide(
                     bundle_dict, None, cash, lessons, patterns, mode="entry",
@@ -431,23 +448,27 @@ class TradingEngine:
                     continue
 
                 # --- Volatility-based sizing × per-stock conviction ---
-                equity_pts = await self.portfolio.equity_history(limit=1)
-                equity = equity_pts[-1]["equity"] if equity_pts else cash
                 atr_pct = atr_pct_from_indicators(tech)
                 value = compute_buy_value(
                     equity, cash, decision.confidence * max(0.5, decision.size_pct),
                     atr_pct, settings,
                     conviction_multiplier=profile.conviction_multiplier())
-                if value < settings.min_trade_value:
+
+                # Whole shares only — floor the budget to an integer share count.
+                qty = int(value // ref_price)
+                if qty < 1:
                     actions.append({"symbol": symbol, "action": "SKIP",
-                                    "reason": f"trade ${value:.0f} < "
+                                    "reason": f"budget ${value:.0f} < 1 share "
+                                              f"(${ref_price:.0f})"})
+                    continue
+                notional = qty * ref_price
+                if notional < settings.min_trade_value:
+                    actions.append({"symbol": symbol, "action": "SKIP",
+                                    "reason": f"order ${notional:.0f} < "
                                               f"min ${settings.min_trade_value:.0f}"})
                     continue
-                qty = round(value / ref_price, 6)
-                if qty <= 0:
-                    continue
                 try:
-                    fill = await broker.buy(symbol, qty, ref_price, bundle_dict,
+                    fill = await broker.buy(symbol, float(qty), ref_price, bundle_dict,
                                             decision.reasoning, pattern_hash)
                 except InsufficientCash as e:
                     actions.append({"symbol": symbol, "action": "SKIP",

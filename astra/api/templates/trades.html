@@ -15,7 +15,7 @@
         <td class="muted">{{ t.executed_at[:19] }}</td>
         <td><strong>{{ t.symbol }}</strong></td>
         <td><span class="badge {{ t.side|lower }}">{{ t.side }}</span></td>
-        <td>{{ "%.4f"|format(t.qty) }}</td>
+        <td>{{ "%.0f"|format(t.qty) }}</td>
         <td>${{ "%.2f"|format(t.price) }}</td>
         <td>${{ "%.2f"|format(t.fees) }}</td>
         <td>{% if t.pnl is not none %}${{ "%.2f"|format(t.pnl) }}{% else %}—{% endif %}</td>
@@ -148,12 +148,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const parts = [];
     if (d.buy) {
       parts.push('<p><strong>Buy</strong> ' + d.buy.executed_at.slice(0,19) +
-        ' · qty ' + d.buy.qty.toFixed(4) +
+        ' · qty ' + d.buy.qty.toFixed(0) +
         (d.buy.reasoning ? '<br><span class="muted">' + d.buy.reasoning + '</span>' : '') + '</p>');
     }
     if (d.sell) {
       parts.push('<p><strong>Sell</strong> ' + d.sell.executed_at.slice(0,19) +
-        ' · qty ' + d.sell.qty.toFixed(4) +
+        ' · qty ' + d.sell.qty.toFixed(0) +
         (d.sell.reasoning ? '<br><span class="muted">' + d.sell.reasoning + '</span>' : '') + '</p>');
     } else {
       parts.push('<p class="muted">Position still open — no sell yet.</p>');

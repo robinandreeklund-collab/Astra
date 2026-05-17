@@ -151,8 +151,9 @@ async def run_backtest(
                 decision = await decider.decide(bundle.to_dict(), pos, cash, lessons, patterns)
 
                 if decision.action == "BUY" and pos is None:
-                    qty = await risk.size_buy(last_close, decision.confidence * decision.size_pct)
-                    if qty > 0:
+                    raw_qty = await risk.size_buy(last_close, decision.confidence * decision.size_pct)
+                    qty = float(int(raw_qty))  # whole shares only
+                    if qty >= 1:
                         ok, _ = await risk.validate_buy(sym, qty, last_close)
                         if ok:
                             try:

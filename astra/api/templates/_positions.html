@@ -32,7 +32,7 @@
   {% for p in positions %}
     <tr class="{{ 'pnl-pos' if p.pnl > 0 else ('pnl-neg' if p.pnl < 0 else '') }}">
       <td><strong>{{ p.symbol }}</strong></td>
-      <td>{{ "%.4f"|format(p.qty) }}</td>
+      <td>{{ "%.0f"|format(p.qty) }}</td>
       <td>${{ "%.2f"|format(p.avg_price) }}</td>
       <td>
         ${{ "%.2f"|format(p.last_price) }}

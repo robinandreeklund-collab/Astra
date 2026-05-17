@@ -145,6 +145,53 @@ async def test_max_open_positions_cap(portfolio_db, memory_db, cache_db, patched
     assert skips  # cap actually fired
 
 
+# ---- whole shares (Avanza: no fractional trading) ----
+
+async def test_buys_are_whole_shares(portfolio_db, memory_db, cache_db, patched):
+    settings.scan_universe = False
+    settings.custom_watchlist = "AAPL,MSFT,NVDA,GOOGL,AMZN"
+    settings.watchlist_size = 5
+    settings.cooldown_minutes = 0
+    settings.entry_min_confidence = 0.0
+    settings.max_open_positions = 10
+    settings.max_position_pct = 0.5
+    await portfolio_db.create_account(200_000)
+    await memory_db.start_generation(200_000)
+
+    state = EngineState()
+    engine = TradingEngine(portfolio_db, memory_db, cache_db, state)
+    await engine.tick()
+
+    trades = await portfolio_db.list_trades(limit=1000)
+    assert trades, "expected at least one trade"
+    for t in trades:
+        assert float(t["qty"]) == int(t["qty"]), f"fractional qty: {t}"
+    for p in await portfolio_db.get_positions():
+        assert float(p["qty"]) == int(p["qty"]), f"fractional position: {p}"
+
+
+async def test_unbuyable_stock_skipped(portfolio_db, memory_db, cache_db, patched):
+    """A share priced above the position cap is skipped, not bought."""
+    settings.scan_universe = False
+    settings.custom_watchlist = "AAPL"
+    settings.watchlist_size = 1
+    settings.cooldown_minutes = 0
+    settings.max_position_pct = 0.15
+    settings.entry_min_confidence = 0.0
+    # Tiny account: 15% cap ($30) is below any synthetic share price.
+    await portfolio_db.create_account(200.0)
+    await memory_db.start_generation(200.0)
+
+    state = EngineState()
+    engine = TradingEngine(portfolio_db, memory_db, cache_db, state)
+    result = await engine.tick()
+
+    assert await portfolio_db.get_position("AAPL") is None
+    skips = [a for a in result["actions"]
+             if a["action"] == "SKIP" and "share" in a.get("reason", "")]
+    assert skips, f"expected a whole-share skip, got {result['actions']}"
+
+
 # ---- signal dedup ----
 
 async def test_signal_dedup_skips_unchanged_bar(portfolio_db, memory_db, cache_db, patched):

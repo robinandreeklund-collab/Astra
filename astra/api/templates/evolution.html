@@ -1,0 +1,135 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Evolution{% endblock %}
+{% block content %}
+<section class="card">
+  <h2>Autonomous evolution loop</h2>
+  <p class="muted small">
+    Runs walk-forward generations: each one replays the NEXT, never-traded
+    window of history starting from $10k. The bot carries its per-stock
+    strategy knowledge (profiles + policy model) forward, but never the
+    price path — every window is a fresh, unseen time period, so each
+    generation is an honest out-of-sample test. Between generations a
+    bounded tuner nudges the risk knobs; the next unseen window validates
+    the change automatically. The loop stops when the return target is
+    hit, the windows run out, or performance plateaus.
+  </p>
+  <form id="evo-form" class="row">
+    <label>Symbols (blank = full S&P 500 list)
+      <input type="text" name="symbols" value="" placeholder="AAPL,MSFT,…" />
+    </label>
+    <label>Return target %
+      <input type="number" name="target_return_pct" value="15" min="1" step="1" />
+    </label>
+    <label>Window (trading days)
+      <input type="number" name="window_days" value="63" min="20" max="252" />
+    </label>
+    <label>Max generations
+      <input type="number" name="max_generations" value="20" min="2" max="40" />
+    </label>
+    <button type="submit" class="btn primary">Run evolution</button>
+  </form>
+  <div id="evo-progress" style="display:none;">
+    <div class="progress-bar"><div class="progress-fill" id="evo-fill"></div></div>
+    <p class="small" id="evo-phase"></p>
+  </div>
+</section>
+
+<section class="card" id="evo-result" style="display:none;">
+  <h2>Generations</h2>
+  <p class="small" id="evo-status"></p>
+  <table class="table">
+    <thead>
+      <tr><th>Gen</th><th>Window</th><th>Return</th><th>Sharpe</th>
+          <th>Max DD</th><th>Win%</th><th>Trades</th><th>Tuner changes</th></tr>
+    </thead>
+    <tbody id="evo-rows"></tbody>
+  </table>
+  <div id="evo-params"></div>
+</section>
+
+<script id="evo-last" type="application/json">{{ (last or {}) | tojson }}</script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('evo-form');
+  const box = document.getElementById('evo-progress');
+  const fill = document.getElementById('evo-fill');
+  const phaseEl = document.getElementById('evo-phase');
+  const resultDiv = document.getElementById('evo-result');
+  let poll = null;
+
+  function fmtElapsed(s) {
+    s = Math.round(s || 0);
+    return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  }
+
+  function showResult(res) {
+    if (!res || !res.generations) return;
+    document.getElementById('evo-status').innerHTML =
+      '<strong>' + (res.status || '') + '</strong>'
+      + ' · target +' + res.target_return_pct + '%';
+    document.getElementById('evo-rows').innerHTML = res.generations.map(g => {
+      const r = g.report;
+      const changes = (g.changes || []).map(c =>
+        c.param + '→' + c.value).join(', ') || '—';
+      const cls = r.return_pct > 0 ? 'win' : (r.return_pct < 0 ? 'loss' : '');
+      return `<tr class="${cls}">
+        <td>${g.n}</td><td class="muted small">${g.window}</td>
+        <td>${r.return_pct.toFixed(2)}%</td>
+        <td>${r.sharpe.toFixed(2)}</td>
+        <td>${r.max_drawdown_pct.toFixed(1)}%</td>
+        <td>${(r.win_rate*100).toFixed(0)}%</td>
+        <td>${r.closed_trades}</td>
+        <td class="muted small">${changes}</td></tr>`;
+    }).join('');
+    const fp = res.final_params || {};
+    document.getElementById('evo-params').innerHTML =
+      '<h3>Tuned parameters</h3><pre class="small">'
+      + Object.entries(fp).map(([k, v]) => k + ' = ' + v).join('\n')
+      + '</pre><p class="muted small">These were found by the loop. '
+      + 'To keep them, copy into your .env.</p>';
+    resultDiv.style.display = 'block';
+  }
+
+  async function checkStatus() {
+    try {
+      const r = await fetch('/api/evolution/status');
+      const d = await r.json();
+      if (d.running) {
+        box.style.display = 'block';
+        const cur = d.generation || 0, tot = d.total || 1;
+        fill.style.width = Math.min(100, cur / tot * 100).toFixed(1) + '%';
+        phaseEl.innerHTML = '<strong>' + (d.phase || '') + '</strong>'
+          + (tot ? '  gen ' + cur + ' / ' + tot : '')
+          + (d.detail ? '  —  ' + d.detail : '')
+          + '  ·  elapsed ' + fmtElapsed(d.elapsed_s);
+      } else {
+        if (poll) { clearInterval(poll); poll = null; }
+        fill.style.width = '100%';
+        phaseEl.innerHTML = '<strong>' + (d.phase || 'done') + '</strong>';
+        showResult(d.result);
+      }
+    } catch (e) {}
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    resultDiv.style.display = 'none';
+    const r = await fetch('/api/evolution', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!d.ok) { phaseEl.textContent = d.error || 'failed to start';
+                 box.style.display = 'block'; return; }
+    if (poll) clearInterval(poll);
+    poll = setInterval(checkStatus, 1200);
+    checkStatus();
+  });
+
+  // Show the last completed run on load.
+  try {
+    const last = JSON.parse(document.getElementById('evo-last').textContent);
+    if (last && last.generations) showResult(last);
+  } catch (e) {}
+  checkStatus();
+});
+</script>
+{% endblock %}

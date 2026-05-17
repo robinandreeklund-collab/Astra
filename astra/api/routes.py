@@ -117,6 +117,59 @@ def build_router(app: FastAPI) -> APIRouter:
     async def api_train_status():
         return app.state.training_status
 
+    @r.get("/evolution", response_class=HTMLResponse)
+    async def evolution_page(request: Request):
+        last = await memory.get_model("evolution")
+        return templates.TemplateResponse(
+            request, "evolution.html",
+            {"status": app.state.evolution_status, "last": last},
+        )
+
+    @r.post("/api/evolution")
+    async def api_evolution(
+        symbols: str = Form(""),
+        target_return_pct: float = Form(15.0),
+        window_days: int = Form(63),
+        max_generations: int = Form(20),
+    ):
+        st = app.state.evolution_status
+        if st.get("running"):
+            return {"ok": False, "error": "evolution already running"}
+        from astra.data.universe import FALLBACK_SP500, parse_custom_watchlist
+        syms = parse_custom_watchlist(symbols) or list(FALLBACK_SP500)
+        st.clear()
+        st.update({"running": True, "phase": "starting", "generation": 0,
+                   "total": max_generations, "detail": "", "elapsed_s": 0,
+                   "result": None})
+
+        async def _run() -> None:
+            from astra.engine.evolution import run_evolution
+            try:
+                def _progress(update: dict) -> None:
+                    st.update(update)
+                result = await run_evolution(
+                    syms, memory, cache,
+                    target_return_pct=target_return_pct,
+                    window_days=window_days,
+                    max_generations=max_generations,
+                    progress=_progress)
+                st["result"] = result
+                st["phase"] = result.get("status", "done") if result.get("ok") \
+                    else result.get("error", "failed")
+            except Exception as e:
+                log.exception("evolution failed")
+                st["phase"] = f"error: {e}"
+                st["result"] = {"ok": False, "error": str(e)}
+            finally:
+                st["running"] = False
+
+        asyncio.create_task(_run())
+        return {"ok": True, "started": True, "symbols": len(syms)}
+
+    @r.get("/api/evolution/status")
+    async def api_evolution_status():
+        return app.state.evolution_status
+
     @r.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         acc = await portfolio.get_account()

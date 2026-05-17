@@ -89,9 +89,13 @@ class _Portfolio:
 
 async def _load_history(
     symbols: list[str], cache: CacheDB,
+    report: Any = None,
 ) -> dict[str, list[dict[str, Any]]]:
     out: dict[str, list[dict[str, Any]]] = {}
-    for sym in symbols:
+    total = len(symbols)
+    for i, sym in enumerate(symbols):
+        if report:
+            report("Loading 5y history", i + 1, total, sym)
         try:
             rows = await fetch_daily_candles(sym, days=1825, cache=cache)
             if len(rows) >= 80:
@@ -108,6 +112,8 @@ def _replay_window(
     starting: float,
     learn: bool,
     bandit: Any = None,
+    report: Any = None,
+    phase: str = "Replaying",
 ) -> _Portfolio:
     """Replay one window. When learn=True, profiles + bandit are updated."""
     pf = _Portfolio(starting)
@@ -116,8 +122,12 @@ def _replay_window(
         s: {int(c["t"]): i for i, c in enumerate(rows)}
         for s, rows in history.items()
     }
+    total_days = len(date_index)
 
     for day, ts in enumerate(date_index):
+        if report and day % 25 == 0:
+            report(phase, day, total_days,
+                   f"open positions: {len(pf.positions)}")
         prices: dict[str, float] = {}
         for sym, rows in history.items():
             idx = by_ts[sym].get(ts)
@@ -244,16 +254,27 @@ async def run_training(
     cache: CacheDB,
     validate_fraction: float = 0.30,
     persist: bool = True,
-    progress: Callable[[str], None] | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Walk-forward training run. Returns train/validate reports."""
-    def _say(m: str) -> None:
-        log.info("training: %s", m)
-        if progress:
-            progress(m)
+    """Walk-forward training run. Returns train/validate reports.
 
-    _say(f"loading history for {len(symbols)} symbols…")
-    history = await _load_history(symbols, cache)
+    `progress` is called with structured updates:
+    {phase, current, total, detail}."""
+    import time as _time
+    started = _time.monotonic()
+
+    def _report(phase: str, current: int = 0, total: int = 0,
+                detail: str = "") -> None:
+        log.info("training: %s %d/%d %s", phase, current, total, detail)
+        if progress:
+            progress({
+                "phase": phase, "current": current, "total": total,
+                "detail": detail,
+                "elapsed_s": round(_time.monotonic() - started, 1),
+            })
+
+    _report("Loading 5y history", 0, len(symbols), "starting…")
+    history = await _load_history(symbols, cache, report=_report)
     if not history:
         return {"ok": False, "error": "no history available"}
 
@@ -264,31 +285,31 @@ async def run_training(
     split = int(len(all_ts) * (1.0 - validate_fraction))
     train_ts = all_ts[:split]
     validate_ts = all_ts[split:]
-    _say(f"{len(train_ts)} train days, {len(validate_ts)} validate days")
 
     profiles: dict[str, StockProfile] = {}
     from astra.engine.contextual_bandit import LinTS, save_bandit
     bandit = LinTS()
 
     # --- TRAIN: profiles + policy bandit learn ---
-    _say("replaying train window (profiles + policy model learning)…")
     train_pf = _replay_window(history, train_ts, profiles, starting_balance,
-                              learn=True, bandit=bandit)
+                              learn=True, bandit=bandit, report=_report,
+                              phase="Training (profiles learning)")
 
     # Character from full history.
+    _report("Classifying stock character", 0, len(history), "")
     for sym, rows in history.items():
         ch = compute_character(rows)
         if ch.get("classified"):
             profiles.setdefault(sym, StockProfile(symbol=sym)).character = ch
 
     # --- VALIDATE: profiles frozen ---
-    _say("replaying validate window (profiles frozen)…")
     frozen = {s: StockProfile.from_dict(p.to_dict()) for s, p in profiles.items()}
     validate_pf = _replay_window(
-        history, validate_ts, frozen, starting_balance, learn=False)
+        history, validate_ts, frozen, starting_balance, learn=False,
+        report=_report, phase="Validating (profiles frozen)")
 
     if persist:
-        _say("persisting trained profiles + policy model to memory.db…")
+        _report("Persisting trained models", 0, len(profiles), "memory.db")
         for prof in profiles.values():
             await save_profile(memory, prof)
         await save_bandit(memory, bandit)
@@ -298,7 +319,7 @@ async def run_training(
     validate_report = full_report(
         validate_pf.equity_curve, validate_pf.trades, starting_balance)
 
-    _say("done")
+    _report("Done", 1, 1, "")
     return {
         "ok": True,
         "symbols": len(history),

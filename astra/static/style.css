@@ -110,6 +110,12 @@ form button { align-self: flex-start; }
 .engine-control.running .engine-state { color: #6e6; }
 .engine-control.paused .engine-state { color: #db4; }
 
+/* Training progress bar */
+.progress-bar { height: 14px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 7px; overflow: hidden; margin: 10px 0 6px; }
+.progress-fill { height: 100%; background: var(--accent); width: 0%;
+  transition: width 0.4s ease; }
+
 /* Summary cards row */
 .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px; margin-bottom: 16px; }

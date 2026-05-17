@@ -89,20 +89,23 @@ def build_router(app: FastAPI) -> APIRouter:
         from astra.data.universe import FALLBACK_SP500, parse_custom_watchlist
         syms = parse_custom_watchlist(symbols) or list(FALLBACK_SP500)
         st.clear()
-        st.update({"running": True, "message": "starting…", "result": None})
+        st.update({"running": True, "phase": "starting", "current": 0,
+                   "total": len(syms), "detail": "", "elapsed_s": 0,
+                   "result": None})
 
         async def _run() -> None:
             from astra.engine.trainer import run_training
             try:
-                def _progress(m: str) -> None:
-                    st["message"] = m
+                def _progress(update: dict) -> None:
+                    st.update(update)
                 result = await run_training(
                     syms, starting_balance, memory, cache, progress=_progress)
                 st["result"] = result
-                st["message"] = "complete" if result.get("ok") else result.get("error", "failed")
+                st["phase"] = ("Complete" if result.get("ok")
+                               else result.get("error", "failed"))
             except Exception as e:
                 log.exception("training failed")
-                st["message"] = f"error: {e}"
+                st["phase"] = f"error: {e}"
                 st["result"] = {"ok": False, "error": str(e)}
             finally:
                 st["running"] = False

@@ -20,6 +20,10 @@
     </label>
     <button type="submit" class="btn primary">Run training</button>
   </form>
+  <div id="train-progress" style="display:none;">
+    <div class="progress-bar"><div class="progress-fill" id="train-fill"></div></div>
+    <p class="small" id="train-phase"></p>
+  </div>
   <p class="muted small" id="train-status"></p>
 </section>
 
@@ -74,13 +78,36 @@ document.addEventListener('DOMContentLoaded', () => {
     resultDiv.style.display = 'block';
   }
 
+  const progressBox = document.getElementById('train-progress');
+  const fill = document.getElementById('train-fill');
+  const phaseEl = document.getElementById('train-phase');
+
+  function fmtElapsed(s) {
+    s = Math.round(s || 0);
+    if (s < 60) return s + 's';
+    return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  }
+
   async function checkStatus() {
     try {
       const r = await fetch('/api/train/status');
       const d = await r.json();
-      status.textContent = (d.running ? '⏳ ' : '') + (d.message || '');
-      if (!d.running) {
+      if (d.running) {
+        progressBox.style.display = 'block';
+        const cur = d.current || 0, tot = d.total || 0;
+        const pct = tot > 0 ? Math.min(100, cur / tot * 100) : 0;
+        fill.style.width = pct.toFixed(1) + '%';
+        let line = '<strong>' + (d.phase || '') + '</strong>';
+        if (tot > 0) line += '  ' + cur + ' / ' + tot;
+        if (d.detail) line += '  —  ' + d.detail;
+        line += '  ·  elapsed ' + fmtElapsed(d.elapsed_s);
+        phaseEl.innerHTML = line;
+        status.textContent = '';
+      } else {
         if (poll) { clearInterval(poll); poll = null; }
+        fill.style.width = '100%';
+        phaseEl.innerHTML = '<strong>' + (d.phase || 'done') + '</strong>'
+          + (d.elapsed_s ? '  ·  took ' + fmtElapsed(d.elapsed_s) : '');
         showResult(d.result);
       }
     } catch (e) {}
@@ -95,7 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const d = await r.json();
     if (!d.ok) { status.textContent = d.error || 'failed to start'; return; }
     if (poll) clearInterval(poll);
-    poll = setInterval(checkStatus, 1500);
+    poll = setInterval(checkStatus, 1000);
     checkStatus();
   });
 

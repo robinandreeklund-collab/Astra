@@ -62,9 +62,16 @@ class EngineState:
         self.last_trade_at: dict[str, float] = {}
         self.subscribers: list[asyncio.Queue[TickEvent]] = []
 
-    def in_cooldown(self, symbol: str, cooldown_seconds: float) -> bool:
+    def in_cooldown(self, symbol: str, cooldown_seconds: float,
+                    now: float | None = None) -> bool:
+        """Cooldown check against the supplied clock. In replay mode `now`
+        is the replay timestamp, so the cooldown is measured in replay time
+        — not wall-clock, which would lock symbols for tens of replay days."""
         last = self.last_trade_at.get(symbol)
-        return last is not None and (time.time() - last) < cooldown_seconds
+        if last is None:
+            return False
+        now = now if now is not None else time.time()
+        return (now - last) < cooldown_seconds
 
     def push_signal(self, symbol: str, snapshot: dict[str, Any], keep: int = 3) -> None:
         hist = self.signal_history.setdefault(symbol, [])
@@ -169,6 +176,7 @@ class TradingEngine:
         # The very first replay tick loads the data and runs a FULL cycle
         # on the starting day (no advance yet) so the bot trades from tick 1.
         monitor_only = False
+        market = None
         if settings.simulate_data:
             from astra.data.simulator import get_market, load_market
             market = get_market()
@@ -191,6 +199,10 @@ class TradingEngine:
 
         if monitor_only:
             return await self._monitor_tick()
+
+        # Cooldown clock: replay time in sim mode, wall-clock otherwise.
+        clock = (float(market.current_ts)
+                 if (settings.simulate_data and market) else time.time())
 
         # Load per-stock adaptive profiles + the global signal prior.
         from astra.profiles import load_all_profiles, load_global
@@ -289,7 +301,7 @@ class TradingEngine:
                                              ref_price, snap, reasoning, ph)
                 except NoPosition:
                     return None
-                self.state.last_trade_at[symbol] = time.time()
+                self.state.last_trade_at[symbol] = clock
                 await self.portfolio.log_thought(symbol, "SELL", 1.0, reasoning)
                 await self.state.broadcast(TickEvent("trade", {
                     "symbol": symbol, "side": "SELL", "qty": fill.qty,
@@ -368,7 +380,7 @@ class TradingEngine:
                         continue
 
                     # --- Cooldown: just hold, don't re-evaluate ---
-                    if self.state.in_cooldown(symbol, cooldown_sec):
+                    if self.state.in_cooldown(symbol, cooldown_sec, clock):
                         actions.append({"symbol": symbol, "action": "HOLD",
                                         "reason": "cooldown"})
                         continue
@@ -422,7 +434,7 @@ class TradingEngine:
                 if entries_blocked:
                     continue
                 # --- Cooldown ---
-                if self.state.in_cooldown(symbol, cooldown_sec):
+                if self.state.in_cooldown(symbol, cooldown_sec, clock):
                     continue
                 # --- Concentration cap ---
                 if open_count >= settings.max_open_positions:
@@ -582,7 +594,7 @@ class TradingEngine:
                     actions.append({"symbol": symbol, "action": "SKIP",
                                     "reason": str(e)})
                     continue
-                self.state.last_trade_at[symbol] = time.time()
+                self.state.last_trade_at[symbol] = clock
                 open_count += 1
                 actions.append({"symbol": symbol, "action": "BUY",
                                 "qty": fill.qty, "price": fill.price})
@@ -673,7 +685,8 @@ class TradingEngine:
                                          snap, reason, ph)
             except NoPosition:
                 continue
-            self.state.last_trade_at[symbol] = time.time()
+            self.state.last_trade_at[symbol] = (
+                float(market.current_ts) if market else time.time())
             await self.portfolio.log_thought(symbol, "SELL", 1.0, reason)
             await self.state.broadcast(TickEvent("trade", {
                 "symbol": symbol, "side": "SELL", "qty": fill.qty,

@@ -72,19 +72,27 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  function markerDataset(label, marker, color) {
+  function markerDataset(label, marker, color, n) {
     if (!marker || marker.index === null || marker.index === undefined) return null;
-    const data = new Array(arguments[3] || 0).fill(null);
+    if (marker.index < 0 || marker.index >= n) return null;
+    // Full-length array aligned with the close line; the price sits at the
+    // trade's candle index, everything else is null. This pins the marker
+    // exactly on the line at the right x-position on a category axis.
+    const data = new Array(n).fill(null);
+    data[marker.index] = marker.price;
+    const radius = data.map(v => (v === null ? 0 : 11));
+    const hover = data.map(v => (v === null ? 0 : 14));
     return {
       label: label,
-      data: [{ x: marker.index, y: marker.price }],
-      type: 'scatter',
+      data: data,
       pointStyle: label.startsWith('Buy') ? 'triangle' : 'rectRot',
-      pointRadius: 11,
-      pointHoverRadius: 13,
+      pointRadius: radius,
+      pointHoverRadius: hover,
       borderColor: color,
       backgroundColor: color,
+      borderWidth: 2,
       showLine: false,
+      order: 0,
     };
   }
 
@@ -106,14 +114,15 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('tm-kpis').innerHTML = kpis.map(
       k => '<div><em>' + k[0] + '</em><strong>' + k[1] + '</strong></div>').join('');
 
+    const n = d.closes.length;
     const datasets = [{
       label: 'Close', data: d.closes, borderColor: '#3aa',
       tension: 0.2, fill: false, pointRadius: 0, order: 2,
     }];
-    const buyDs = markerDataset('Buy', d.buy, '#3c3');
-    const sellDs = markerDataset('Sell', d.sell, '#e55');
-    if (buyDs) { buyDs.order = 1; datasets.push(buyDs); }
-    if (sellDs) { sellDs.order = 1; datasets.push(sellDs); }
+    const buyDs = markerDataset('Buy', d.buy, '#3c3', n);
+    const sellDs = markerDataset('Sell', d.sell, '#e55', n);
+    if (buyDs) datasets.push(buyDs);
+    if (sellDs) datasets.push(sellDs);
 
     if (chart) chart.destroy();
     chart = new Chart(document.getElementById('tm-chart'), {
@@ -121,8 +130,14 @@ document.addEventListener('DOMContentLoaded', () => {
       data: { labels: d.dates, datasets: datasets },
       options: {
         animation: false,
-        parsing: true,
-        plugins: { legend: { labels: { color: '#aaa' } } },
+        plugins: {
+          legend: { labels: { color: '#aaa' } },
+          tooltip: {
+            callbacks: {
+              title: (items) => d.dates[items[0].dataIndex],
+            },
+          },
+        },
         scales: {
           x: { type: 'category', ticks: { color: '#777', maxTicksLimit: 8 } },
           y: { ticks: { color: '#aaa' } },

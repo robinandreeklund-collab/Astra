@@ -1,0 +1,11 @@
+<div class="engine-control {{ 'running' if engine_running else 'paused' }}">
+  <span class="engine-state">
+    {% if engine_running %}● Trading — engine is running{% else %}⏸ Paused — engine is not trading{% endif %}
+  </span>
+  <button class="btn {{ 'danger' if engine_running else 'primary' }}"
+          hx-post="/api/engine/toggle"
+          hx-target="#engine-control"
+          hx-swap="innerHTML">
+    {% if engine_running %}⏸ Pause{% else %}▶ Play{% endif %}
+  </button>
+</div>

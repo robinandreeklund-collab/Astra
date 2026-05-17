@@ -243,7 +243,8 @@ def build_router(app: FastAPI) -> APIRouter:
         acc = await portfolio.create_account(starting_balance, mode="paper")
         await memory.start_generation(starting_balance)
         await portfolio.append_equity(starting_balance, starting_balance)
-        await engine.start()
+        # The engine stays PAUSED — the user presses Play when ready.
+        await memory.save_model("engine_pref", {"running": False})
         return {"ok": True, "account": acc}
 
     @r.post("/api/reset")
@@ -266,20 +267,38 @@ def build_router(app: FastAPI) -> APIRouter:
         new_acc = await portfolio.create_account(starting_balance, mode="paper")
         await memory.start_generation(starting_balance)
         await portfolio.append_equity(starting_balance, starting_balance)
-        await engine.start()
+        # Reset leaves the engine PAUSED — the user presses Play when ready.
+        await memory.save_model("engine_pref", {"running": False})
         return {"ok": True, "account": new_acc, "memory_kept": True}
 
-    # ---- Engine control ----
+    # ---- Engine control (play / pause) ----
 
     @r.post("/api/engine/start")
     async def engine_start():
         await engine.start()
+        await memory.save_model("engine_pref", {"running": True})
         return {"ok": True, "running": state.running}
 
     @r.post("/api/engine/stop")
     async def engine_stop():
         await engine.stop()
+        await memory.save_model("engine_pref", {"running": False})
         return {"ok": True, "running": state.running}
+
+    @r.post("/api/engine/toggle", response_class=HTMLResponse)
+    async def engine_toggle(request: Request):
+        if state.running:
+            await engine.stop()
+        else:
+            await engine.start()
+        await memory.save_model("engine_pref", {"running": state.running})
+        return templates.TemplateResponse(
+            request, "_engine_control.html", {"engine_running": state.running})
+
+    @r.get("/api/engine/control", response_class=HTMLResponse)
+    async def engine_control(request: Request):
+        return templates.TemplateResponse(
+            request, "_engine_control.html", {"engine_running": state.running})
 
     @r.post("/api/engine/tick")
     async def engine_tick():

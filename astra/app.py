@@ -41,8 +41,11 @@ def create_app() -> FastAPI:
         await portfolio.init()
         await memory.init()
         await cache.init()
-        # Start engine only if an account exists
-        if await portfolio.get_account():
+        # The engine starts PAUSED. It only auto-resumes if the user had
+        # explicitly pressed Play before (the preference is persisted), so a
+        # fresh install or a restart never starts trading on its own.
+        pref = await memory.get_model("engine_pref")
+        if pref and pref.get("running") and await portfolio.get_account():
             await engine.start()
         yield
         await engine.stop()

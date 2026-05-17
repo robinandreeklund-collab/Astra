@@ -50,6 +50,29 @@ def test_setup_creates_account_and_dashboard(client):
     assert "Equity" in r.text
 
 
+def test_engine_starts_paused_after_setup(client):
+    """The engine must NOT auto-start — it starts paused, user presses Play."""
+    client.post("/api/setup", data={"starting_balance": "10000"})
+    r = client.get("/health")
+    assert r.json()["running"] is False
+    # The control fragment offers a Play button.
+    r = client.get("/api/engine/control")
+    assert "Play" in r.text and "Paused" in r.text
+
+
+def test_engine_toggle_play_pause(client):
+    client.post("/api/setup", data={"starting_balance": "10000"})
+    # Play
+    r = client.post("/api/engine/toggle")
+    assert r.status_code == 200
+    assert "Pause" in r.text
+    assert client.get("/health").json()["running"] is True
+    # Pause
+    r = client.post("/api/engine/toggle")
+    assert "Play" in r.text
+    assert client.get("/health").json()["running"] is False
+
+
 def test_force_tick_and_status(client):
     client.post("/api/setup", data={"starting_balance": "10000"})
     r = client.post("/api/engine/tick")

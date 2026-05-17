@@ -627,6 +627,7 @@ class TradingEngine:
         profiles = await load_all_profiles(self.memory)
         actions: list[dict[str, Any]] = []
         prices: dict[str, float] = {}
+        monitored: list[tuple[str, float]] = []
 
         for p in positions:
             symbol = p["symbol"]
@@ -646,6 +647,7 @@ class TradingEngine:
 
             pct = (price - avg) / avg if avg > 0 else 0.0
             drop = (price - hwm) / hwm if hwm > 0 else 0.0
+            monitored.append((symbol, pct))
             reason = None
             if pct <= -stop_pct:
                 reason = (f"STOP-LOSS: {pct*100:.1f}% intraday "
@@ -690,6 +692,28 @@ class TradingEngine:
         await self.portfolio.append_equity(equity, cash)
         self.state.last_prices.update(mtm)
         await self.state.broadcast(TickEvent("equity", {"equity": equity, "cash": cash}))
+
+        # Heartbeat — show the bot IS watching every intraday hour, even
+        # when no exit triggered. New ENTRY decisions wait for the next
+        # trading day (the daily signals don't change intraday).
+        when = (self.state.replay.get("datetime") or "")[-5:]
+        if monitored:
+            ranked = sorted(monitored, key=lambda x: x[1], reverse=True)
+            best, worst = ranked[0], ranked[-1]
+            fired = sum(1 for a in actions if a["action"] == "SELL")
+            msg = (f"Monitoring {len(monitored)} positions @ {when} — "
+                   f"best {best[0]} {best[1]*100:+.1f}%, "
+                   f"worst {worst[0]} {worst[1]*100:+.1f}%")
+            msg += (f"; {fired} exit(s) triggered" if fired
+                    else "; no exit triggers")
+        else:
+            msg = (f"No open positions @ {when} — "
+                   f"next entries at the start of the next trading day")
+        await self.portfolio.log_thought(None, "MONITOR", None, msg)
+        await self.state.broadcast(TickEvent("thought", {
+            "symbol": None, "action": "MONITOR", "confidence": None,
+            "reasoning": msg, "source": "monitor"}))
+
         self.state.last_tick = time.time()
         self.state.tick_count += 1
         return {"monitor": True, "actions": actions, "equity": equity, "cash": cash}

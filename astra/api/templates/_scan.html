@@ -3,9 +3,16 @@
   <span class="kv"><em>Universe</em><strong>{{ scan.universe_size }}</strong></span>
   <span class="kv"><em>Scored</em><strong>{{ scan.scanned }}</strong></span>
   <span class="kv"><em>Deep-dive</em><strong>{{ scan.deep_dive }}</strong></span>
+  {% if scan.regime %}
+  <span class="kv"><em>Market regime</em>
+    <strong class="regime-{{ scan.regime.regime }}">{{ scan.regime.regime|upper }}</strong>
+  </span>
+  <span class="kv"><em>Breadth</em>
+    <strong>{{ "%.0f"|format((scan.regime.breadth or 0)*100) }}%</strong></span>
+  {% endif %}
 </div>
 <table class="table">
-  <thead><tr><th>Rank</th><th>Symbol</th><th>Score</th><th>Bull</th><th>Bear</th></tr></thead>
+  <thead><tr><th>Rank</th><th>Symbol</th><th>Score</th><th>Bull</th><th>Bear</th><th>RS rank</th></tr></thead>
   <tbody>
   {% for c in scan.top_candidates %}
     <tr>
@@ -14,6 +21,7 @@
       <td>{{ "%.2f"|format(c.score) }}</td>
       <td>{{ c.bull }}</td>
       <td>{{ c.bear }}</td>
+      <td>{% if c.rs_rank is not none %}{{ "%.0f"|format(c.rs_rank*100) }}{% else %}—{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>

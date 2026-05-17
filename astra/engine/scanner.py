@@ -92,6 +92,28 @@ async def _fetch_and_score(
     }
 
 
+def _attach_cross_section(scored: list[dict[str, Any]]) -> None:
+    """Compute cross-sectional relative strength + percentile rank.
+
+    Relative strength = a stock's 5-day return minus the universe mean.
+    A documented, robust edge (the momentum factor): leaders tend to keep
+    leading. Each result gets `rel_strength` and `rs_rank` (0..1 percentile).
+    """
+    moms: list[tuple[dict[str, Any], float]] = []
+    for r in scored:
+        m = (r.get("indicators") or {}).get("pct_change_5d")
+        if isinstance(m, (int, float)):
+            moms.append((r, float(m)))
+    if not moms:
+        return
+    universe_mean = sum(m for _, m in moms) / len(moms)
+    ordered = sorted(moms, key=lambda x: x[1])
+    n = len(ordered)
+    for rank, (r, m) in enumerate(ordered):
+        r["rel_strength"] = round(m - universe_mean, 3)
+        r["rs_rank"] = round(rank / max(1, n - 1), 3)
+
+
 async def scan_universe(
     symbols: list[str],
     cache: CacheDB,
@@ -99,17 +121,20 @@ async def scan_universe(
     priors: dict[str, dict[str, Any]] | None = None,
     profiles: dict[str, Any] | None = None,
     concurrency: int = 16,
-) -> list[dict[str, Any]]:
-    """Score every symbol and return the top `top_n` by score.
+) -> dict[str, Any]:
+    """Score the universe; return top candidates + the market regime.
 
-    When `profiles` (symbol -> StockProfile) is given, each symbol's raw TA
-    score is multiplied by a Thompson-sampling bandit weight drawn from that
-    stock's win-rate posterior — proven winners get ranked up, names the bot
-    keeps losing on get ranked down, but every stock keeps a non-zero chance
-    of being picked so the universe stays explored.
+    Returns {"candidates": [...top_n...], "regime": {...}, "scanned": N}.
+
+    Each candidate's raw TA score is multiplied by a Thompson-sampling
+    bandit weight (proven winners up, losers down) and a cross-sectional
+    relative-strength boost (leaders up). The regime is classified from the
+    breadth and momentum of the whole scanned set.
     """
+    from astra.signals.regime import classify_regime
+
     if not symbols:
-        return []
+        return {"candidates": [], "regime": {"regime": "unknown"}, "scanned": 0}
     t0 = time.monotonic()
     sem = asyncio.Semaphore(concurrency)
     rng = random.Random()
@@ -126,6 +151,9 @@ async def scan_universe(
     results = await asyncio.gather(*[_one(s) for s in symbols])
     scored = [r for r in results if r is not None and r["score"] > 0]
 
+    regime = classify_regime(scored)
+    _attach_cross_section(scored)
+
     for r in scored:
         r["ta_score"] = r["score"]
         weight = 1.0
@@ -133,15 +161,17 @@ async def scan_universe(
         if prof is not None:
             # Bandit sample ≈ a win-rate draw; map to a 0.4..1.6 multiplier.
             weight = 0.4 + 1.2 * prof.bandit_sample(rng)
+        # Cross-sectional momentum boost: top-decile RS gets up to +30%.
+        rs_rank = r.get("rs_rank", 0.5)
+        rs_boost = 0.85 + 0.45 * rs_rank
         r["bandit_weight"] = round(weight, 3)
-        r["score"] = r["ta_score"] * weight
+        r["score"] = r["ta_score"] * weight * rs_boost
 
     scored.sort(key=lambda r: r["score"], reverse=True)
     top = scored[: max(1, top_n)]
     elapsed = time.monotonic() - t0
     log.info(
-        "Universe scan: %d/%d symbols scored, top %d in %.2fs (best score=%.2f)",
-        len(scored), len(symbols), len(top), elapsed,
-        top[0]["score"] if top else 0.0,
+        "Universe scan: %d/%d scored, regime=%s, top %d in %.2fs",
+        len(scored), len(symbols), regime.get("regime"), len(top), elapsed,
     )
-    return top
+    return {"candidates": top, "regime": regime, "scanned": len(scored)}

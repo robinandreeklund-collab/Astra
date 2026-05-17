@@ -51,6 +51,8 @@ class EngineState:
         # candidates) — shown on the dashboard so the user can see what the
         # bot considered, not just what it traded.
         self.last_scan: dict[str, Any] = {}
+        # Latest market regime classification.
+        self.regime: dict[str, Any] = {"regime": "unknown"}
         # Per-symbol last decision: {bar_ts, action, decided_at}. Used to skip
         # re-deciding a symbol when the underlying daily data hasn't changed.
         self.last_decision: dict[str, dict[str, Any]] = {}
@@ -177,19 +179,24 @@ class TradingEngine:
             # Pass the prior snapshots so the scanner can weight momentum,
             # and the profiles so it can apply the Thompson-sampling bandit.
             priors = {sym: hist[0] for sym, hist in self.state.signal_history.items() if hist}
-            scored = await scan_universe(
+            scan = await scan_universe(
                 universe, self.cache, settings.scan_top_n,
                 priors=priors, profiles=profiles,
             )
+            scored = scan["candidates"]
+            regime = scan["regime"]
+            cross_section = {s["symbol"]: s for s in scored}
             top_candidates = [s["symbol"] for s in scored]
             symbols = list(dict.fromkeys(list(held) + priority + top_candidates))
             self.state.last_scan = {
                 "universe_size": len(universe),
-                "scanned": len(scored),
+                "scanned": scan["scanned"],
                 "deep_dive": len(symbols),
+                "regime": regime,
                 "top_candidates": [
                     {"symbol": s["symbol"], "score": round(s["score"], 2),
-                     "bull": s["bull"], "bear": s["bear"]}
+                     "bull": s["bull"], "bear": s["bear"],
+                     "rs_rank": s.get("rs_rank")}
                     for s in scored[:10]
                 ],
             }
@@ -198,6 +205,12 @@ class TradingEngine:
             symbols = list(dict.fromkeys(list(held) + watch))[
                 : settings.watchlist_size + len(held)
             ]
+            regime = {"regime": "unknown"}
+            cross_section = {}
+
+        from astra.signals.regime import regime_risk_multiplier
+        regime_mult = regime_risk_multiplier(regime.get("regime", "unknown"))
+        self.state.regime = regime
 
         async with FinnhubClient(cache=self.cache) as fc:
             agg = SignalAggregator(fc)
@@ -338,6 +351,8 @@ class TradingEngine:
                     bundle_dict = bundle.to_dict()
                     bundle_dict["_deltas"] = compute_deltas(
                         bundle_dict, prior[0] if prior else None)
+                    bundle_dict["_regime"] = regime
+                    bundle_dict["_cross_section"] = cross_section.get(symbol)
                     lessons, patterns = await retriever.for_decision(
                         bundle.pattern_hash()[0])
                     decision = await decider.decide(
@@ -409,6 +424,8 @@ class TradingEngine:
                 bundle_dict = bundle.to_dict()
                 bundle_dict["_deltas"] = compute_deltas(
                     bundle_dict, prior[0] if prior else None)
+                bundle_dict["_regime"] = regime
+                bundle_dict["_cross_section"] = cross_section.get(symbol)
                 lessons, patterns = await retriever.for_decision(
                     bundle.pattern_hash()[0])
 
@@ -447,12 +464,12 @@ class TradingEngine:
                                     "reason": "stock benched (poor track record)"})
                     continue
 
-                # --- Volatility-based sizing × per-stock conviction ---
+                # --- Sizing: volatility × per-stock conviction × regime ---
                 atr_pct = atr_pct_from_indicators(tech)
                 value = compute_buy_value(
                     equity, cash, decision.confidence * max(0.5, decision.size_pct),
                     atr_pct, settings,
-                    conviction_multiplier=profile.conviction_multiplier())
+                    conviction_multiplier=profile.conviction_multiplier() * regime_mult)
 
                 # Whole shares only — floor the budget to an integer share count.
                 qty = int(value // ref_price)

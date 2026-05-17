@@ -147,6 +147,23 @@ def build_decision_user_prompt(
             if hl:
                 parts.append(f"NEWS: {hl[:120]}")
 
+    # Market regime — the tide most stocks move with.
+    regime = bundle_dict.get("_regime") or {}
+    if regime.get("regime") and regime["regime"] != "unknown":
+        from astra.signals.regime import regime_summary
+        parts.append(regime_summary(regime))
+
+    # Cross-sectional relative strength — is this stock a leader or laggard?
+    cs = bundle_dict.get("_cross_section") or {}
+    rs_rank = cs.get("rs_rank")
+    if isinstance(rs_rank, (int, float)):
+        tier = ("top decile" if rs_rank > 0.9 else "leader" if rs_rank > 0.7
+                else "laggard" if rs_rank < 0.3 else "middle")
+        parts.append(
+            f"REL STRENGTH: {tier} (rank {rs_rank*100:.0f}/100 vs universe, "
+            f"{cs.get('rel_strength', 0):+.1f}% vs market)"
+        )
+
     # Tick-over-tick changes — high-signal block for the model
     deltas = bundle_dict.get("_deltas") or {}
     if deltas.get("available"):

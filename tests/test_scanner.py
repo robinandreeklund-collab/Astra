@@ -58,14 +58,18 @@ async def test_scan_respects_top_n_and_orders_desc(cache_db):
         return candles.get(symbol, [])
 
     with patch("astra.engine.scanner.fetch_daily_candles", new=fake_fetch):
-        top = await scan_universe(list(candles.keys()), cache_db, top_n=5)
+        scan = await scan_universe(list(candles.keys()), cache_db, top_n=5)
 
+    top = scan["candidates"]
     assert len(top) <= 5
     # Strictly non-increasing scores
     scores = [t["score"] for t in top]
     assert scores == sorted(scores, reverse=True)
-    # All returned have a positive score (zero-score symbols filtered out)
     assert all(t["score"] > 0 for t in top)
+    # Regime is classified and cross-sectional RS attached.
+    assert scan["regime"]["regime"] in (
+        "risk-on", "neutral", "risk-off", "high-vol", "unknown")
+    assert all("rs_rank" in t for t in top)
 
 
 async def test_scan_filters_out_empty_data(cache_db):
@@ -73,5 +77,5 @@ async def test_scan_filters_out_empty_data(cache_db):
         return []  # no data for any symbol
 
     with patch("astra.engine.scanner.fetch_daily_candles", new=fake_fetch):
-        top = await scan_universe(["A", "B", "C"], cache_db, top_n=10)
-    assert top == []
+        scan = await scan_universe(["A", "B", "C"], cache_db, top_n=10)
+    assert scan["candidates"] == []

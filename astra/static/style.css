@@ -141,6 +141,10 @@ form button { align-self: flex-start; }
 .scan-header .kv { flex-direction: column; align-items: flex-start; }
 .scan-header .kv em { font-size: 10px; }
 .scan-header .kv strong { font-size: 16px; color: var(--accent-2); }
+.regime-risk-on { color: #6e6 !important; }
+.regime-neutral { color: #aaa !important; }
+.regime-risk-off { color: #f88 !important; }
+.regime-high-vol { color: #db4 !important; }
 
 /* Positions summary above the table */
 .pos-summary { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;

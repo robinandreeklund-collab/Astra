@@ -11,7 +11,12 @@
     <strong class="{{ 'on' if engine_running else 'off' }}">{{ "▶ ON" if engine_running else "⏸ OFF" }}</strong>
   </span>
   {% if simulate_data %}
-  <span class="kv"><em>Data</em><strong class="sim">◈ SIM</strong></span>
+  <span class="kv"><em>Data</em><strong class="sim">◈ REPLAY</strong></span>
+  {% if replay and replay.total %}
+  <span class="kv"><em>Replay day</em>
+    <strong class="sim">{{ replay.day }}/{{ replay.total }} · {{ replay.date }}</strong>
+  </span>
+  {% endif %}
   {% endif %}
   <span class="kv" id="next-tick-pill" data-next-tick="">
     <em>Next tick</em><strong id="next-tick">—</strong>

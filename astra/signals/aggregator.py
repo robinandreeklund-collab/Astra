@@ -90,13 +90,20 @@ class SignalAggregator:
         # Finnhub-backed signals (news, insider, recs, etc.) are skipped.
         from astra.config import settings as _settings
         if _settings.simulate_data:
-            from astra.data.simulator import get_simulator
+            from astra.data.simulator import get_market
             from astra.profiles.character import compute_character
-            rows = get_simulator().candles(symbol, 180)
+            market = get_market()
+            # Indicators + character from COMPLETED days only; the price
+            # is the current (cursor-day) price — no lookahead either way.
+            rows = market.candles(symbol, 180) if market else []
+            price = market.current_price(symbol) if market else None
             if rows:
                 b.technical = technical.compute_indicators(rows)
                 b.character = compute_character(rows)
-                b.quote = {"c": rows[-1]["c"]}
+                if price is not None:
+                    b.quote = {"c": price}
+                else:
+                    b.quote = {"c": rows[-1]["c"]}
             else:
                 b.technical = {"available": False, "reason": "no_sim_data"}
             return b

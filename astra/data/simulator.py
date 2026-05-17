@@ -1,131 +1,176 @@
-"""Synthetic market simulator.
+"""Historical-replay market.
 
-Lets the platform run with no live data — useful when the market is closed
-or there's no API key. Each symbol follows a regime-switching random walk
-(trending up / trending down / choppy) so the bot sees genuine momentum,
-RSI extremes, MACD crosses and volume spikes to act on.
+Simulation mode replays the last year of REAL daily price data, one
+trading day per engine tick. The bot trades against actual market history
+exactly as it would live — with one hard guarantee:
 
-One `advance()` call appends a fresh daily bar to every symbol; the engine
-calls it once per tick, so simulated time runs at one trading day per tick.
+    THE BOT NEVER SEES THE FUTURE.
+
+A cursor marks the current replay day. `candles()` returns only bars at or
+before the cursor; `advance()` reveals the next day. There is no lookahead
+anywhere. This makes the replay an honest out-of-sample test: train the
+models on older data, then watch the trained bot trade a year it has never
+seen and cannot peek into.
 """
 
 from __future__ import annotations
 
 import logging
-import random
-import time
+from datetime import datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
 
-_SEED_DAYS = 220
-_MAX_HISTORY = 280
+# How many trading days of history are replayed (≈ one year).
+DEFAULT_REPLAY_DAYS = 252
+# Minimum bars a symbol needs to be included (warm-up for indicators).
+_MIN_BARS = 150
 
 
-class SimulatedMarket:
-    def __init__(self, symbols: list[str], seed: int | None = None) -> None:
-        self.rng = random.Random(seed)
-        self.symbols = list(symbols)
-        self.history: dict[str, list[dict[str, Any]]] = {}
-        self.regime: dict[str, dict[str, Any]] = {}
-        self.created_at = time.time()
-        self.days_advanced = 0
-        self._seed_series()
+class HistoricalMarket:
+    """Replays real daily candles forward, revealing one day at a time."""
 
-    # ---- internals ----
-
-    def _new_regime(self) -> dict[str, Any]:
-        kind = self.rng.choice(["up", "up", "down", "chop", "chop"])
-        drift = {"up": 0.006, "down": -0.006, "chop": 0.0}[kind]
-        return {
-            "kind": kind,
-            "drift": drift,
-            "vol": self.rng.uniform(0.012, 0.038),
-            "days_left": self.rng.randint(6, 28),
+    def __init__(
+        self,
+        history: dict[str, list[dict[str, Any]]],
+        replay_days: int = DEFAULT_REPLAY_DAYS,
+    ) -> None:
+        # Each symbol's full real history, sorted by timestamp.
+        self.history: dict[str, list[dict[str, Any]]] = {
+            s: sorted(rows, key=lambda c: int(c["t"]))
+            for s, rows in history.items()
         }
+        # A shared timeline of every distinct trading day.
+        self.timeline: list[int] = sorted(
+            {int(c["t"]) for rows in self.history.values() for c in rows}
+        )
+        self.replay_days = replay_days
+        # The cursor starts `replay_days` from the end; everything before it
+        # is warm-up history the bot may use, everything after is the future
+        # it must NOT see.
+        self.start_cursor = max(0, len(self.timeline) - replay_days - 1)
+        self.cursor = self.start_cursor
 
-    def _step(self, symbol: str, price: float, ts: int) -> tuple[float, dict[str, Any]]:
-        reg = self.regime.get(symbol)
-        if reg is None or reg["days_left"] <= 0:
-            reg = self._new_regime()
-            self.regime[symbol] = reg
-        reg["days_left"] -= 1
+    @property
+    def current_ts(self) -> int:
+        if not self.timeline:
+            return 0
+        return self.timeline[min(self.cursor, len(self.timeline) - 1)]
 
-        ret = self.rng.gauss(reg["drift"], reg["vol"])
-        new_price = max(1.0, price * (1 + ret))
-        spread = abs(self.rng.gauss(0, reg["vol"] / 2))
-        high = new_price * (1 + spread)
-        low = new_price * (1 - spread)
-        open_ = low + (high - low) * self.rng.random()
-        vol = self.rng.uniform(5e5, 5e6)
-        if self.rng.random() < 0.06:  # occasional volume spike
-            vol *= self.rng.uniform(2.0, 5.0)
-        candle = {
-            "t": ts,
-            "o": round(open_, 4),
-            "h": round(high, 4),
-            "l": round(low, 4),
-            "c": round(new_price, 4),
-            "v": round(vol, 0),
-        }
-        return new_price, candle
+    @property
+    def at_end(self) -> bool:
+        return self.cursor >= len(self.timeline) - 1
 
-    def _seed_series(self) -> None:
-        base_ts = int(time.time()) - _SEED_DAYS * 86400
-        for sym in self.symbols:
-            price = self.rng.uniform(20.0, 480.0)
-            rows: list[dict[str, Any]] = []
-            for i in range(_SEED_DAYS):
-                price, candle = self._step(sym, price, base_ts + i * 86400)
-                rows.append(candle)
-            self.history[sym] = rows
-        log.info("SimulatedMarket seeded %d symbols × %d days",
-                 len(self.symbols), _SEED_DAYS)
+    @property
+    def total_replay_days(self) -> int:
+        return max(1, len(self.timeline) - 1 - self.start_cursor)
 
-    # ---- public API ----
+    @property
+    def day_number(self) -> int:
+        return self.cursor - self.start_cursor
+
+    @property
+    def progress(self) -> float:
+        return min(1.0, self.day_number / self.total_replay_days)
+
+    def current_date(self) -> str:
+        if not self.timeline:
+            return ""
+        return datetime.fromtimestamp(
+            self.current_ts, tz=timezone.utc).date().isoformat()
 
     def advance(self) -> None:
-        """Append one new daily bar to every symbol."""
-        self.days_advanced += 1
-        for sym in self.symbols:
-            rows = self.history.get(sym)
-            if not rows:
-                continue
-            last = rows[-1]
-            price, candle = self._step(sym, float(last["c"]), int(last["t"]) + 86400)
-            rows.append(candle)
-            if len(rows) > _MAX_HISTORY:
-                del rows[: len(rows) - _MAX_HISTORY]
+        """Reveal the next trading day."""
+        if self.cursor < len(self.timeline) - 1:
+            self.cursor += 1
 
     def candles(self, symbol: str, days: int = 180) -> list[dict[str, Any]]:
-        rows = self.history.get(symbol, [])
+        """Analysis history — only days STRICTLY BEFORE the cursor.
+
+        The bot computes every indicator and signal off completed trading
+        days. The current (cursor) day's full candle is deliberately NOT
+        here — the bot must not see today's high/low/close as if the day
+        were already over. The only thing it knows about 'today' is the
+        current price (see current_price)."""
+        ts = self.current_ts
+        rows = [c for c in self.history.get(symbol, []) if int(c["t"]) < ts]
         if days and len(rows) > days:
             return rows[-days:]
-        return list(rows)
+        return rows
 
+    def current_price(self, symbol: str) -> float | None:
+        """The price RIGHT NOW — the close of the cursor day (or the last
+        bar at or before it). This is all the bot knows about today; it is
+        used to fill orders and mark positions, never to compute signals."""
+        ts = self.current_ts
+        last = None
+        for c in self.history.get(symbol, []):
+            if int(c["t"]) <= ts:
+                last = c
+            else:
+                break
+        return float(last["c"]) if last else None
+
+    # Backwards-compatible alias.
     def last_close(self, symbol: str) -> float | None:
-        rows = self.history.get(symbol)
-        return float(rows[-1]["c"]) if rows else None
+        return self.current_price(symbol)
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "active": True,
+            "day": self.day_number,
+            "total": self.total_replay_days,
+            "date": self.current_date(),
+            "progress": round(self.progress, 3),
+            "at_end": self.at_end,
+            "symbols": len(self.history),
+        }
 
 
 # ---- module-level singleton ----
 
-_SIM: SimulatedMarket | None = None
+_MARKET: HistoricalMarket | None = None
 
 
-def get_simulator(symbols: list[str] | None = None) -> SimulatedMarket:
-    """Return the live simulator, creating it on first use."""
-    global _SIM
-    if _SIM is None:
-        if not symbols:
-            from astra.data.universe import FALLBACK_SP500
-            symbols = list(FALLBACK_SP500)
-        _SIM = SimulatedMarket(symbols)
-    return _SIM
+def get_market() -> HistoricalMarket | None:
+    return _MARKET
 
 
-def reset_simulator(symbols: list[str] | None = None) -> SimulatedMarket:
-    """Discard the current simulated market and start a fresh one."""
-    global _SIM
-    _SIM = None
-    return get_simulator(symbols)
+def reset_market() -> None:
+    global _MARKET
+    _MARKET = None
+
+
+def is_ready() -> bool:
+    return _MARKET is not None and bool(_MARKET.timeline)
+
+
+async def load_market(
+    symbols: list[str],
+    cache: Any,
+    replay_days: int = DEFAULT_REPLAY_DAYS,
+) -> HistoricalMarket:
+    """Load real 5y history for the universe and arm the replay.
+
+    Uses force_real so it fetches actual market data even though sim mode
+    is on. After a training run the 5y candles are already cached, so this
+    is fast."""
+    global _MARKET
+    from astra.data.yahoo import fetch_daily_candles
+
+    history: dict[str, list[dict[str, Any]]] = {}
+    for sym in symbols:
+        try:
+            rows = await fetch_daily_candles(
+                sym, days=1825, cache=cache, force_real=True)
+            if len(rows) >= _MIN_BARS:
+                history[sym] = rows
+        except Exception as e:
+            log.debug("replay history fetch failed %s: %s", sym, e)
+
+    _MARKET = HistoricalMarket(history, replay_days)
+    log.info(
+        "Historical replay armed: %d symbols, replaying %d days from %s",
+        len(history), _MARKET.total_replay_days, _MARKET.current_date(),
+    )
+    return _MARKET

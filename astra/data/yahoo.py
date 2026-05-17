@@ -80,15 +80,18 @@ async def fetch_daily_candles(
     symbol: str,
     days: int = 180,
     cache: CacheDB | None = None,
+    force_real: bool = False,
 ) -> list[dict[str, Any]]:
     """Return daily candles for ~`days` back, served from cache when possible.
 
-    In simulation mode the candles come from the synthetic market instead of
-    Yahoo, and are never cached (the sim advances every tick)."""
+    In simulation mode the candles come from the historical-replay market —
+    only days at or before the replay cursor, never the future. `force_real`
+    bypasses that to fetch actual Yahoo data (used to LOAD the replay)."""
     from astra.config import settings as _settings
-    if _settings.simulate_data:
-        from astra.data.simulator import get_simulator
-        return get_simulator().candles(symbol, days)
+    if _settings.simulate_data and not force_real:
+        from astra.data.simulator import get_market
+        market = get_market()
+        return market.candles(symbol, days) if market else []
 
     sym = symbol.replace(".", "-")  # BRK.B -> BRK-B for yfinance
     period = _period_for(days)

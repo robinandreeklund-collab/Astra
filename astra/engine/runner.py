@@ -53,6 +53,8 @@ class EngineState:
         self.last_scan: dict[str, Any] = {}
         # Latest market regime classification.
         self.regime: dict[str, Any] = {"regime": "unknown"}
+        # Historical-replay progress (when simulation mode is on).
+        self.replay: dict[str, Any] = {}
         # Per-symbol last decision: {bar_ts, action, decided_at}. Used to skip
         # re-deciding a symbol when the underlying daily data hasn't changed.
         self.last_decision: dict[str, dict[str, Any]] = {}
@@ -161,11 +163,24 @@ class TradingEngine:
         held = {p["symbol"] for p in await self.portfolio.get_positions()}
         universe = await self.ensure_universe()
 
-        # Simulation mode: advance the synthetic market one trading day so
-        # every symbol gets a fresh bar for this tick.
+        # Simulation mode: historical replay. Load the real-data market if
+        # needed, then advance one trading day. The bot only ever sees data
+        # up to the cursor — never the future.
         if settings.simulate_data:
-            from astra.data.simulator import get_simulator
-            get_simulator(universe).advance()
+            from astra.data.simulator import get_market, load_market
+            market = get_market()
+            if market is None:
+                market = await load_market(universe, self.cache)
+            market.advance()
+            self.state.replay = market.status()
+            if market.at_end:
+                log.info("Historical replay complete (%d days)",
+                         market.total_replay_days)
+                await self.state.broadcast(TickEvent("replay_done", {
+                    "date": market.current_date(),
+                    "days": market.total_replay_days,
+                }))
+                self._stop.set()
 
         # Load per-stock adaptive profiles + the global signal prior.
         from astra.profiles import load_all_profiles, load_global

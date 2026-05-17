@@ -327,18 +327,18 @@ def build_router(app: FastAPI) -> APIRouter:
 
     @r.post("/api/engine/sim-mode")
     async def engine_sim_mode(enabled: bool = Form(...)):
+        from astra.data.simulator import reset_market
         settings.simulate_data = bool(enabled)
-        # Start a fresh synthetic market and clear stale per-symbol caches so
-        # simulated and real data never cross-contaminate.
-        if settings.simulate_data:
-            from astra.data.simulator import reset_simulator
-            from astra.data.universe import FALLBACK_SP500
-            reset_simulator(list(FALLBACK_SP500))
+        # Clear the replay market + stale per-symbol caches. The historical
+        # market is (re)loaded by the engine on its first tick — replaying
+        # the last year of REAL data, one day per tick, with no lookahead.
+        reset_market()
         state.last_prices.clear()
         state.signal_history.clear()
         state.last_decision.clear()
         state.last_trade_at.clear()
         state.last_scan = {}
+        state.replay = {}
         return {"ok": True, "simulate_data": settings.simulate_data}
 
     # ---- Status fragments (HTMX) ----
@@ -362,6 +362,7 @@ def build_router(app: FastAPI) -> APIRouter:
                 "last_error": state.last_error,
                 "tick_seconds": settings.tick_seconds,
                 "simulate_data": settings.simulate_data,
+                "replay": state.replay,
             },
         )
 

@@ -35,23 +35,29 @@
     <span class="muted small" id="tick-status"></span>
   </div>
 
-  <h3 style="margin-top:14px;">Simulation mode</h3>
+  <h3 style="margin-top:14px;">Historical replay (simulation)</h3>
   <p class="muted small">
-    When ON, all market data is synthetic — a regime-switching simulator
-    with trends, choppy phases and volume spikes. Each tick advances one
-    simulated trading day, so you can watch the bot trade with the real
-    market closed. No Finnhub / Yahoo calls are made.
+    When ON, the bot replays the <strong>last year of REAL market data</strong>,
+    one trading day per tick. It trades exactly as it would live — it only
+    ever sees prices up to the current replay day and <strong>never the
+    future</strong>. This is the honest out-of-sample test: train the models
+    on older data, then watch the trained bot trade a year it has never seen.
+  </p>
+  <p class="muted small">
+    Recommended flow: run <strong>Training</strong> on the full S&amp;P 500
+    first (that caches the data), then turn this ON, reset the portfolio,
+    and press Play.
   </p>
   <p class="muted small">
     Currently: <strong id="sim-state">{{ "ON" if settings.simulate_data else "OFF" }}</strong>.
     Switching mode clears price caches — <strong>reset the portfolio</strong>
-    afterwards so P&amp;L isn't measured against the other dataset's prices.
+    afterwards.
   </p>
   <div class="row">
     <button class="btn small {{ 'primary' if not settings.simulate_data else '' }}"
-            onclick="setSim(true)">Turn simulation ON</button>
+            onclick="setSim(true)">Turn replay ON</button>
     <button class="btn small {{ 'primary' if settings.simulate_data else '' }}"
-            onclick="setSim(false)">Turn simulation OFF (live data)</button>
+            onclick="setSim(false)">Turn replay OFF (live data)</button>
     <span class="muted small" id="sim-status"></span>
   </div>
 </section>

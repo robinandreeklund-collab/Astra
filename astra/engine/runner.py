@@ -517,23 +517,35 @@ class TradingEngine:
                 if decision.action != "BUY":
                     actions.append({"symbol": symbol, "action": "HOLD"})
                     continue
-                if decision.confidence < settings.entry_min_confidence:
+
+                # A BUY decision must clear the gates below to become a trade.
+                # When a gate blocks it, log the reason as a thought so the
+                # user can see WHY a BUY signal didn't turn into a trade.
+                async def _block(reason: str) -> None:
                     actions.append({"symbol": symbol, "action": "SKIP",
-                                    "reason": f"confidence {decision.confidence:.2f} "
-                                              f"< {settings.entry_min_confidence}"})
+                                    "reason": reason})
+                    await self.portfolio.log_thought(
+                        symbol, "SKIP", decision.confidence,
+                        f"BUY blocked — {reason}")
+                    await self.state.broadcast(TickEvent("thought", {
+                        "symbol": symbol, "action": "SKIP",
+                        "confidence": decision.confidence,
+                        "reasoning": f"BUY blocked — {reason}", "source": "gate"}))
+
+                if decision.confidence < settings.entry_min_confidence:
+                    await _block(f"confidence {decision.confidence:.2f} below the "
+                                 f"entry bar {settings.entry_min_confidence}")
                     continue
 
                 # --- Benched stocks: the bot keeps losing here, skip entry ---
                 if profile.state() == "BENCHED":
-                    actions.append({"symbol": symbol, "action": "SKIP",
-                                    "reason": "stock benched (poor track record)"})
+                    await _block("stock benched — poor track record")
                     continue
 
                 # --- Policy model: skip contexts it has learned to avoid ---
                 if policy_score < -0.8:
-                    actions.append({"symbol": symbol, "action": "SKIP",
-                                    "reason": f"policy model: expected "
-                                              f"{policy_score:+.2f}R in this context"})
+                    await _block(f"policy model expects {policy_score:+.2f}R "
+                                 f"in this context")
                     continue
 
                 # --- Sizing: volatility × conviction × regime × policy × ensemble ---
@@ -554,15 +566,13 @@ class TradingEngine:
                 # Whole shares only — floor the budget to an integer share count.
                 qty = int(value // ref_price)
                 if qty < 1:
-                    actions.append({"symbol": symbol, "action": "SKIP",
-                                    "reason": f"budget ${value:.0f} < 1 share "
-                                              f"(${ref_price:.0f})"})
+                    await _block(f"position budget ${value:.0f} can't afford "
+                                 f"1 share (${ref_price:.0f})")
                     continue
                 notional = qty * ref_price
                 if notional < settings.min_trade_value:
-                    actions.append({"symbol": symbol, "action": "SKIP",
-                                    "reason": f"order ${notional:.0f} < "
-                                              f"min ${settings.min_trade_value:.0f}"})
+                    await _block(f"order ${notional:.0f} below the "
+                                 f"${settings.min_trade_value:.0f} minimum")
                     continue
 
                 # --- Portfolio-level risk: sector cap + total heat ---
@@ -581,7 +591,7 @@ class TradingEngine:
                     equity, stop_pct, settings.max_sector_pct,
                     settings.max_portfolio_heat, settings.stop_loss_pct)
                 if not ok:
-                    actions.append({"symbol": symbol, "action": "SKIP", "reason": why})
+                    await _block(why)
                     continue
 
                 # Record the stop distance so R-multiples can be computed
@@ -591,8 +601,7 @@ class TradingEngine:
                     fill = await broker.buy(symbol, float(qty), ref_price, bundle_dict,
                                             decision.reasoning, pattern_hash)
                 except InsufficientCash as e:
-                    actions.append({"symbol": symbol, "action": "SKIP",
-                                    "reason": str(e)})
+                    await _block(f"insufficient cash ({e})")
                     continue
                 self.state.last_trade_at[symbol] = clock
                 open_count += 1

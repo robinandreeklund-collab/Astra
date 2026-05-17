@@ -33,6 +33,15 @@
         <td><span class="badge state-{{ p.state|lower }}">{{ p.state }}</span></td>
         <td>{{ "%.2f"|format(p.conviction) }}×</td>
       </tr>
+      {% if p.playbook %}
+      <tr class="playbook-row">
+        <td></td>
+        <td colspan="10" class="muted small">
+          <strong>Playbook:</strong>
+          {% for line in p.playbook.split('\n') %}{{ line }}<br>{% endfor %}
+        </td>
+      </tr>
+      {% endif %}
     {% endfor %}
     {% if not profiles %}
       <tr><td colspan="11" class="muted center">

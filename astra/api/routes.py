@@ -58,6 +58,7 @@ def build_router(app: FastAPI) -> APIRouter:
         lessons = await memory.all_lessons()
         patterns = await memory.all_patterns()
         generations = await memory.all_generations()
+        critique = await memory.get_model("critique")
         return templates.TemplateResponse(
             request,
             "memory.html",
@@ -65,6 +66,7 @@ def build_router(app: FastAPI) -> APIRouter:
                 "lessons": lessons,
                 "patterns": patterns,
                 "generations": generations,
+                "critique": critique,
             },
         )
 
@@ -142,11 +144,13 @@ def build_router(app: FastAPI) -> APIRouter:
                 "trades": p.trades,
                 "win_rate": p.win_rate(),
                 "profit_factor": p.profit_factor(),
+                "expectancy_r": p.expectancy_r(),
                 "realized_pnl": p.realized_pnl,
                 "edge_score": p.edge_score(),
                 "state": p.state(),
                 "conviction": p.conviction_multiplier(),
                 "streak": p.current_streak,
+                "playbook": p.playbook,
             })
         # Most-traded first, then by edge
         rows.sort(key=lambda r: (r["trades"], r["edge_score"]), reverse=True)
@@ -218,8 +222,8 @@ def build_router(app: FastAPI) -> APIRouter:
 
     @r.post("/api/engine/reflect")
     async def engine_reflect():
-        lessons = await engine.reflect()
-        return {"ok": True, "lessons": lessons}
+        result = await engine.reflect()
+        return {"ok": True, **result}
 
     @r.post("/api/engine/tick-interval")
     async def engine_tick_interval(seconds: int = Form(...)):

@@ -1,6 +1,19 @@
 {% extends "_base.html" %}
 {% block title %}Astra — Memory{% endblock %}
 {% block content %}
+{% if critique and critique.suggestions %}
+<section class="card">
+  <h2>Strategy critique
+    <span class="muted small">— LLM review, advisory only ({{ critique.generated_at[:16] }})</span>
+  </h2>
+  <ul class="lessons">
+    {% for s in critique.suggestions %}
+    <li>{{ s }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <section class="card">
   <h2>Generations</h2>
   <table class="table">

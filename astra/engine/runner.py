@@ -563,14 +563,73 @@ class TradingEngine:
         self.state.last_error = None
         return {"actions": actions, "equity": equity, "cash": cash}
 
-    async def reflect(self) -> list[str]:
+    async def reflect(self) -> dict[str, Any]:
+        """Maintenance cycle: distil lessons, refresh per-stock playbooks,
+        and run the strategy critic. All LLM-backed with heuristic fallbacks."""
         llm = LMStudioClient()
         ok = await llm.health()
         try:
-            r = Reflector(self.portfolio, self.memory, llm if ok else None)
-            return await r.reflect()
+            client = llm if ok else None
+            r = Reflector(self.portfolio, self.memory, client)
+            lessons = await r.reflect()
+            playbooks = await self._refresh_playbooks(client)
+            critique = await self._run_critic(client)
+            return {"lessons": lessons, "playbooks_updated": playbooks,
+                    "critique": critique}
         finally:
             await llm.close()
+
+    async def _refresh_playbooks(self, client: Any) -> int:
+        """Regenerate stale playbooks for stocks with enough trade history."""
+        from astra.llm.roles import generate_playbook
+        from astra.profiles import (
+            GLOBAL_SYMBOL, StockProfile, load_all_profiles, save_profile)
+        from astra.profiles.profile import all_global_rates
+
+        profiles = await load_all_profiles(self.memory)
+        global_rates = all_global_rates(
+            profiles.get(GLOBAL_SYMBOL) or StockProfile(symbol=GLOBAL_SYMBOL))
+        updated = 0
+        # Refresh at most 8 per cycle to bound LLM cost.
+        stale = [
+            p for s, p in profiles.items()
+            if s != GLOBAL_SYMBOL and p.trades >= 5
+            and p.trades - p.playbook_at_trade >= 5
+        ]
+        stale.sort(key=lambda p: p.trades - p.playbook_at_trade, reverse=True)
+        for prof in stale[:8]:
+            recent = await self.portfolio.closed_trades(limit=12)
+            recent = [t for t in recent if t.get("symbol") == prof.symbol]
+            prof.playbook = await generate_playbook(
+                prof, recent, global_rates, client)
+            prof.playbook_at_trade = prof.trades
+            await save_profile(self.memory, prof)
+            updated += 1
+        return updated
+
+    async def _run_critic(self, client: Any) -> list[str]:
+        from astra.llm.roles import generate_critique
+        from astra.engine.metrics import full_report
+        from astra.profiles import GLOBAL_SYMBOL, load_all_profiles
+
+        acc = await self.portfolio.get_account()
+        if not acc:
+            return []
+        equity = [h["equity"] for h in await self.portfolio.equity_history(limit=5000)]
+        trades = await self.portfolio.list_trades(limit=100000)
+        report = full_report(equity, trades, float(acc["starting_balance"]))
+        profiles = await load_all_profiles(self.memory)
+        summaries = [
+            {"symbol": s, "edge": p.edge_score()}
+            for s, p in profiles.items() if s != GLOBAL_SYMBOL and p.trades >= 3
+        ]
+        critique = await generate_critique(report, summaries, client)
+        await self.memory.save_model("critique", {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "suggestions": critique,
+            "report": report,
+        })
+        return critique
 
     async def start(self) -> None:
         if self._task and not self._task.done():

@@ -118,6 +118,10 @@ class StockProfile:
     last_traded: str | None = None
     beta_alpha: float = 1.0       # Thompson-sampling Beta(alpha, beta)
     beta_beta: float = 1.0
+    # LLM-authored playbook — "how to trade this stock" — regenerated
+    # periodically from the profile + recent trade history.
+    playbook: str = ""
+    playbook_at_trade: int = 0    # trade count when the playbook was written
     updated_at: str | None = None
 
     # ---- Layer 3: ledger stats ----
@@ -319,6 +323,10 @@ class StockProfile:
                         f"- Fails here: {worst[0]} ({worst[1]*100:.0f}% win, "
                         f"{worst[2]} samples) — avoid"
                     )
+
+        if self.playbook:
+            lines.append(f"PLAYBOOK for {self.symbol}:")
+            lines.append(self.playbook)
 
         return "\n".join(lines)
 

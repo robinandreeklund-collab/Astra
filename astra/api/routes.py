@@ -158,6 +158,63 @@ def build_router(app: FastAPI) -> APIRouter:
             request, "profiles.html", {"profiles": rows},
         )
 
+    @r.get("/performance", response_class=HTMLResponse)
+    async def performance_page(request: Request):
+        from astra.engine import metrics
+        from astra.engine.portfolio_risk import sector_of
+        from astra.memory.recorder import MemoryRecorder
+
+        acc = await portfolio.get_account()
+        if not acc:
+            return templates.TemplateResponse(
+                request, "performance.html", {"has_account": False})
+
+        hist = await portfolio.equity_history(limit=10000)
+        equity = [h["equity"] for h in hist]
+        all_trades = await portfolio.list_trades(limit=100000)
+        closed = [t for t in all_trades
+                  if t.get("side") == "SELL" and t.get("pnl") is not None]
+        starting = float(acc["starting_balance"])
+        report = metrics.full_report(equity, all_trades, starting)
+        dd = metrics.drawdown_series(equity)
+
+        # Per-sector + per-stock P&L.
+        by_sector: dict[str, float] = {}
+        by_stock: dict[str, float] = {}
+        by_regime: dict[str, float] = {}
+        r_values: list[float] = []
+        for t in closed:
+            pnl = float(t["pnl"])
+            by_sector[sector_of(t["symbol"])] = (
+                by_sector.get(sector_of(t["symbol"]), 0.0) + pnl)
+            by_stock[t["symbol"]] = by_stock.get(t["symbol"], 0.0) + pnl
+            opening = None
+            if t.get("closed_trade_id"):
+                opening = await portfolio.get_trade(int(t["closed_trade_id"]))
+            entry_snap = (opening or {}).get("signal_snapshot") or {}
+            regime = entry_snap.get("_entry_regime", "unknown")
+            by_regime[regime] = by_regime.get(regime, 0.0) + pnl
+            r_values.append(MemoryRecorder._r_multiple(opening, entry_snap, pnl))
+
+        top = sorted(by_stock.items(), key=lambda x: x[1], reverse=True)[:5]
+        bottom = sorted(by_stock.items(), key=lambda x: x[1])[:5]
+
+        return templates.TemplateResponse(
+            request, "performance.html",
+            {
+                "has_account": True,
+                "report": report,
+                "equity_points": [{"ts": h["ts"][:19], "equity": h["equity"]}
+                                  for h in hist],
+                "drawdown": [round(d * 100, 2) for d in dd],
+                "by_sector": sorted(by_sector.items(), key=lambda x: x[1], reverse=True),
+                "by_regime": sorted(by_regime.items(), key=lambda x: x[1], reverse=True),
+                "r_histogram": metrics.r_histogram(r_values),
+                "top_stocks": top,
+                "bottom_stocks": bottom,
+            },
+        )
+
     @r.get("/experts", response_class=HTMLResponse)
     async def experts_page(request: Request):
         from astra.engine.ensemble import load_ensemble

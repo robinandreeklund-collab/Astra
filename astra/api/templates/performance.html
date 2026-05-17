@@ -1,0 +1,131 @@
+{% extends "_base.html" %}
+{% block title %}Astra — Performance{% endblock %}
+{% block content %}
+{% if not has_account %}
+<section class="card center"><p class="muted">No account yet.</p></section>
+{% else %}
+
+<section class="card">
+  <h2>Scorecard</h2>
+  <div class="kpis">
+    <div><strong>{{ "%.2f"|format(report.return_pct) }}%</strong><span>Return</span></div>
+    <div><strong>{{ "%.2f"|format(report.cagr_pct) }}%</strong><span>CAGR</span></div>
+    <div><strong>{{ "%.2f"|format(report.sharpe) }}</strong><span>Sharpe</span></div>
+    <div><strong>{{ "%.2f"|format(report.sortino) }}</strong><span>Sortino</span></div>
+    <div><strong>{{ "%.2f"|format(report.calmar) }}</strong><span>Calmar</span></div>
+    <div><strong>{{ "%.1f"|format(report.max_drawdown_pct) }}%</strong><span>Max drawdown</span></div>
+    <div><strong>{{ "%.0f"|format(report.win_rate*100) }}%</strong><span>Win rate</span></div>
+    <div><strong>{{ "%.2f"|format(report.profit_factor) }}</strong><span>Profit factor</span></div>
+    <div><strong>${{ "%.0f"|format(report.expectancy) }}</strong><span>Expectancy</span></div>
+    <div><strong>{{ report.closed_trades }}</strong><span>Closed trades</span></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Equity &amp; drawdown</h2>
+  <canvas id="perf-chart" height="110"></canvas>
+</section>
+
+<section class="grid-2">
+  <div class="card">
+    <h2>P&amp;L by sector</h2>
+    <table class="table">
+      <thead><tr><th>Sector</th><th>Realized P&amp;L</th></tr></thead>
+      <tbody>
+      {% for sec, pnl in by_sector %}
+        <tr class="{{ 'win' if pnl > 0 else ('loss' if pnl < 0 else '') }}">
+          <td>{{ sec }}</td><td>${{ "%.2f"|format(pnl) }}</td>
+        </tr>
+      {% endfor %}
+      {% if not by_sector %}<tr><td colspan="2" class="muted center">No closed trades.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>P&amp;L by entry regime</h2>
+    <table class="table">
+      <thead><tr><th>Regime</th><th>Realized P&amp;L</th></tr></thead>
+      <tbody>
+      {% for reg, pnl in by_regime %}
+        <tr class="{{ 'win' if pnl > 0 else ('loss' if pnl < 0 else '') }}">
+          <td>{{ reg }}</td><td>${{ "%.2f"|format(pnl) }}</td>
+        </tr>
+      {% endfor %}
+      {% if not by_regime %}<tr><td colspan="2" class="muted center">No closed trades.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>R-multiple distribution
+    <span class="muted small">— trade outcomes in units of risk taken</span>
+  </h2>
+  <canvas id="r-chart" height="70"></canvas>
+</section>
+
+<section class="grid-2">
+  <div class="card">
+    <h2>Best stocks</h2>
+    <table class="table">
+      <tbody>
+      {% for sym, pnl in top_stocks %}
+        <tr class="win"><td><strong>{{ sym }}</strong></td><td>${{ "%.2f"|format(pnl) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Worst stocks</h2>
+    <table class="table">
+      <tbody>
+      {% for sym, pnl in bottom_stocks %}
+        <tr class="loss"><td><strong>{{ sym }}</strong></td><td>${{ "%.2f"|format(pnl) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script id="perf-data" type="application/json">
+{
+  "equity": {{ equity_points | tojson }},
+  "drawdown": {{ drawdown | tojson }},
+  "rhist": {{ r_histogram | tojson }}
+}
+</script>
+<script>
+window.__astra_init = function () {
+  const d = JSON.parse(document.getElementById('perf-data').textContent);
+  const labels = d.equity.map(p => p.ts.slice(0, 10));
+
+  new Chart(document.getElementById('perf-chart'), {
+    type: 'line',
+    data: { labels: labels, datasets: [
+      { label: 'Equity', data: d.equity.map(p => p.equity),
+        borderColor: '#3aa', tension: 0.2, pointRadius: 0, yAxisID: 'y' },
+      { label: 'Drawdown %', data: d.drawdown, borderColor: '#e55',
+        backgroundColor: 'rgba(229,85,85,0.15)', fill: true,
+        tension: 0.2, pointRadius: 0, yAxisID: 'y1' },
+    ]},
+    options: { animation: false, plugins: { legend: { labels: { color: '#aaa' } } },
+      scales: {
+        x: { ticks: { color: '#777', maxTicksLimit: 8 } },
+        y: { position: 'left', ticks: { color: '#aaa' } },
+        y1: { position: 'right', ticks: { color: '#e88' }, grid: { drawOnChartArea: false } },
+      } }
+  });
+
+  new Chart(document.getElementById('r-chart'), {
+    type: 'bar',
+    data: { labels: Object.keys(d.rhist),
+      datasets: [{ label: 'Trades', data: Object.values(d.rhist),
+        backgroundColor: Object.keys(d.rhist).map(k =>
+          k.indexOf('-') === 0 || k === '<-2R' ? '#e55' : '#3a6') }] },
+    options: { animation: false, plugins: { legend: { display: false } },
+      scales: { x: { ticks: { color: '#aaa' } }, y: { ticks: { color: '#aaa' } } } }
+  });
+};
+</script>
+{% endif %}
+{% endblock %}

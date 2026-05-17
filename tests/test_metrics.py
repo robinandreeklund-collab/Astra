@@ -57,3 +57,21 @@ async def test_full_report():
     assert rep["return_pct"] == pytest.approx(10.0)
     assert rep["alpha_pct"] == pytest.approx(5.0)
     assert "sharpe" in rep and "max_drawdown_pct" in rep
+
+
+async def test_drawdown_series():
+    dd = metrics.drawdown_series([100, 120, 90, 110])
+    assert dd[0] == 0.0
+    assert dd[1] == 0.0          # new peak
+    assert dd[2] == pytest.approx(-0.25)   # 90 vs peak 120
+    assert dd[3] == pytest.approx(-1/12)   # 110 vs peak 120
+
+
+async def test_r_histogram():
+    h = metrics.r_histogram([-3, -1.5, -0.5, 0.5, 1.5, 3, 2.5])
+    assert h["<-2R"] == 1
+    assert h["-2..-1R"] == 1
+    assert h["-1..0R"] == 1
+    assert h["0..1R"] == 1
+    assert h["1..2R"] == 1
+    assert h[">2R"] == 2

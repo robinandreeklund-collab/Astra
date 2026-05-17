@@ -499,17 +499,13 @@ class TradingEngine:
                                               f"{policy_score:+.2f}R in this context"})
                     continue
 
-                # --- Expert ensemble veto: strong disagreement skips entry ---
-                consensus = ensemble_vote["consensus"]
-                if consensus < -0.5:
-                    actions.append({"symbol": symbol, "action": "SKIP",
-                                    "reason": f"expert ensemble against "
-                                              f"(consensus {consensus:+.2f})"})
-                    continue
-
                 # --- Sizing: volatility × conviction × regime × policy × ensemble ---
+                # The expert ensemble advises via sizing, not a hard veto —
+                # the LLM may see what the rule-experts miss. When few experts
+                # back the entry the position is sized right down (to ~40%).
+                consensus = ensemble_vote["consensus"]
                 bandit_factor = max(0.3, min(1.4, 0.6 + 0.5 * policy_score))
-                ensemble_factor = max(0.4, min(1.3, 0.7 + 0.4 * consensus))
+                ensemble_factor = max(0.4, min(1.3, 0.85 + 0.3 * consensus))
                 atr_pct = atr_pct_from_indicators(tech)
                 value = compute_buy_value(
                     equity, cash, decision.confidence * max(0.5, decision.size_pct),

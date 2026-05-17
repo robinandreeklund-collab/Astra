@@ -36,6 +36,36 @@ def max_drawdown(equity: list[float]) -> float:
     return worst
 
 
+def drawdown_series(equity: list[float]) -> list[float]:
+    """Per-point drawdown from the running peak, as a negative fraction."""
+    out: list[float] = []
+    peak = equity[0] if equity else 0.0
+    for v in equity:
+        peak = max(peak, v)
+        out.append(((v - peak) / peak) if peak > 0 else 0.0)
+    return out
+
+
+def r_histogram(r_values: list[float]) -> dict[str, int]:
+    """Bucket R-multiples for a distribution chart."""
+    buckets = {"<-2R": 0, "-2..-1R": 0, "-1..0R": 0,
+               "0..1R": 0, "1..2R": 0, ">2R": 0}
+    for r in r_values:
+        if r < -2:
+            buckets["<-2R"] += 1
+        elif r < -1:
+            buckets["-2..-1R"] += 1
+        elif r < 0:
+            buckets["-1..0R"] += 1
+        elif r < 1:
+            buckets["0..1R"] += 1
+        elif r < 2:
+            buckets["1..2R"] += 1
+        else:
+            buckets[">2R"] += 1
+    return buckets
+
+
 def sharpe(equity: list[float], periods_per_year: int = TRADING_DAYS) -> float:
     rets = _returns(equity)
     if len(rets) < 2:

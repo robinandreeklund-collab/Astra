@@ -112,6 +112,7 @@ class StockProfile:
     gross_profit: float = 0.0
     gross_loss: float = 0.0
     realized_pnl: float = 0.0
+    sum_r: float = 0.0          # sum of trade R-multiples (pnl / initial risk)
     sum_hold_minutes: float = 0.0
     current_streak: int = 0       # +N win streak, -N loss streak
     last_traded: str | None = None
@@ -134,15 +135,28 @@ class StockProfile:
     def avg_hold_minutes(self) -> float:
         return (self.sum_hold_minutes / self.trades) if self.trades else 0.0
 
+    def expectancy_r(self) -> float:
+        """Average R-multiple per trade — the core risk-adjusted edge metric.
+
+        R = trade P&L / the dollar risk taken (stop distance). +0.3R per
+        trade is genuinely good; it's size-independent and stock-independent,
+        so it's the right unit for learning across the universe."""
+        return (self.sum_r / self.trades) if self.trades else 0.0
+
     def edge_score(self) -> float:
-        """A signed −1..+1 measure of realized edge on this stock."""
+        """A signed −1..+1 measure of realized edge on this stock.
+
+        Primarily driven by R-expectancy (risk-adjusted), with profit factor
+        and win rate as supporting evidence."""
         if self.trades < 3:
             return 0.0
         pf = self.profit_factor() or 1.0
         wr = self.win_rate() or 0.5
+        exp_r = self.expectancy_r()
+        r_comp = max(-1.0, min(1.0, exp_r / 0.5))     # +0.5R expectancy → +1
         pf_comp = max(-1.0, min(1.0, (pf - 1.0) / 1.5))
         wr_comp = max(-1.0, min(1.0, (wr - 0.5) * 3.0))
-        raw = 0.6 * pf_comp + 0.4 * wr_comp
+        raw = 0.5 * r_comp + 0.3 * pf_comp + 0.2 * wr_comp
         confidence = min(1.0, self.trades / 12.0)
         return round(raw * confidence, 3)
 
@@ -215,6 +229,7 @@ class StockProfile:
         pnl: float,
         hold_minutes: float,
         entry_signals: list[str],
+        r_multiple: float = 0.0,
     ) -> None:
         self.trades += 1
         if win:
@@ -226,6 +241,7 @@ class StockProfile:
             self.gross_loss += abs(pnl)
             self.current_streak = self.current_streak - 1 if self.current_streak <= 0 else -1
         self.realized_pnl += pnl
+        self.sum_r += r_multiple
         self.sum_hold_minutes += max(0.0, hold_minutes)
 
         # Bandit update with mild decay.
@@ -273,7 +289,8 @@ class StockProfile:
             pf = self.profit_factor() or 0
             lines.append(
                 f"- Record: {self.trades} trades, {wr:.0f}% win, "
-                f"profit factor {pf:.2f}, ${self.realized_pnl:+.0f} realized"
+                f"profit factor {pf:.2f}, {self.expectancy_r():+.2f}R/trade, "
+                f"${self.realized_pnl:+.0f} realized"
             )
             streak = self.current_streak
             streak_note = ""

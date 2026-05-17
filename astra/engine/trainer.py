@@ -57,14 +57,14 @@ class _Portfolio:
         return self.cash + mv
 
     def buy(self, symbol: str, qty: int, price: float,
-            signals: list[str], day: int) -> None:
+            signals: list[str], day: int, stop_pct: float) -> None:
         cost = qty * price + _commission(qty * price)
         if cost > self.cash or qty < 1:
             return
         self.cash -= cost
         self.positions[symbol] = {
             "qty": qty, "avg": price, "hwm": price,
-            "entry_signals": signals, "entry_day": day,
+            "entry_signals": signals, "entry_day": day, "stop_pct": stop_pct,
         }
         self.trades.append({"side": "BUY", "symbol": symbol, "qty": qty,
                             "price": price, "pnl": None, "day": day})
@@ -76,10 +76,13 @@ class _Portfolio:
         proceeds = pos["qty"] * price - _commission(pos["qty"] * price)
         self.cash += proceeds
         pnl = (price - pos["avg"]) * pos["qty"] - _commission(pos["qty"] * price)
+        initial_risk = pos["qty"] * pos["avg"] * pos.get("stop_pct", 0.05)
+        r_multiple = (pnl / initial_risk) if initial_risk > 0 else 0.0
         rec = {"side": "SELL", "symbol": symbol, "qty": pos["qty"],
                "price": price, "pnl": pnl, "day": day,
                "entry_signals": pos["entry_signals"],
-               "hold_days": day - pos["entry_day"]}
+               "hold_days": day - pos["entry_day"],
+               "r_multiple": round(r_multiple, 3)}
         self.trades.append(rec)
         return rec
 
@@ -164,7 +167,7 @@ def _replay_window(
             if qty < 1:
                 continue
             signals = extract_signals({"technical": tech})
-            pf.buy(sym, qty, last_close, signals, day)
+            pf.buy(sym, qty, last_close, signals, day, stop_pct)
 
         pf.equity_curve.append(pf.equity(prices))
 
@@ -218,11 +221,12 @@ def _learn(profiles: dict[str, StockProfile], symbol: str,
     win = pnl > 0
     hold_minutes = rec.get("hold_days", 0) * 24 * 60
     signals = rec.get("entry_signals", [])
+    r = rec.get("r_multiple", 0.0)
     profiles.setdefault(symbol, StockProfile(symbol=symbol)).record_trade_outcome(
-        win, pnl, hold_minutes, signals)
+        win, pnl, hold_minutes, signals, r)
     if signals:
         g = profiles.setdefault(GLOBAL_SYMBOL, StockProfile(symbol=GLOBAL_SYMBOL))
-        g.record_trade_outcome(win, pnl, hold_minutes, signals)
+        g.record_trade_outcome(win, pnl, hold_minutes, signals, r)
 
 
 async def run_training(

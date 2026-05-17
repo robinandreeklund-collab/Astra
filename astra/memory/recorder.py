@@ -83,13 +83,39 @@ class MemoryRecorder:
         entry_snapshot = (opening or {}).get("signal_snapshot") or {}
         entry_signals = extract_signals(entry_snapshot)
 
+        # R-multiple: P&L expressed as a multiple of the dollar risk taken
+        # (initial stop distance). The size-independent learning unit.
+        r_multiple = self._r_multiple(opening, entry_snapshot, pnl)
+
         profile = await load_profile(self.memory, symbol)
-        profile.record_trade_outcome(win, pnl, hold_minutes, entry_signals)
+        profile.record_trade_outcome(win, pnl, hold_minutes, entry_signals, r_multiple)
         await save_profile(self.memory, profile)
 
         # The global aggregate profile collects signal outcomes across all
         # stocks; it's the shrinkage prior for per-stock signal rates.
         if entry_signals:
             global_profile = await load_profile(self.memory, GLOBAL_SYMBOL)
-            global_profile.record_trade_outcome(win, pnl, hold_minutes, entry_signals)
+            global_profile.record_trade_outcome(
+                win, pnl, hold_minutes, entry_signals, r_multiple)
             await save_profile(self.memory, global_profile)
+
+    @staticmethod
+    def _r_multiple(
+        opening: dict[str, Any] | None,
+        entry_snapshot: dict[str, Any],
+        pnl: float,
+    ) -> float:
+        """pnl / initial dollar risk (qty × entry price × stop %)."""
+        if not opening:
+            return 0.0
+        stop_pct = entry_snapshot.get("_stop_pct")
+        try:
+            qty = float(opening.get("qty") or 0)
+            price = float(opening.get("price") or 0)
+            stop_pct = float(stop_pct) if stop_pct is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+        initial_risk = qty * price * stop_pct
+        if initial_risk <= 0:
+            return 0.0
+        return round(pnl / initial_risk, 3)

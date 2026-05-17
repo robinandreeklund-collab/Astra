@@ -484,6 +484,29 @@ class TradingEngine:
                                     "reason": f"order ${notional:.0f} < "
                                               f"min ${settings.min_trade_value:.0f}"})
                     continue
+
+                # --- Portfolio-level risk: sector cap + total heat ---
+                from astra.engine.portfolio_risk import check_new_position
+                held_positions = await self.portfolio.get_positions()
+                risk_prices = dict(self.state.last_prices)
+                risk_prices.update(prices)
+                stop_pcts = {}
+                for hp in held_positions:
+                    hprof = profiles.get(hp["symbol"])
+                    stop_pcts[hp["symbol"]] = (
+                        hprof.adaptive_stop_pct(settings.stop_loss_pct)
+                        if hprof else settings.stop_loss_pct)
+                ok, why = check_new_position(
+                    symbol, notional, held_positions, risk_prices, stop_pcts,
+                    equity, stop_pct, settings.max_sector_pct,
+                    settings.max_portfolio_heat, settings.stop_loss_pct)
+                if not ok:
+                    actions.append({"symbol": symbol, "action": "SKIP", "reason": why})
+                    continue
+
+                # Record the stop distance so R-multiples can be computed
+                # when this trade later closes.
+                bundle_dict["_stop_pct"] = stop_pct
                 try:
                     fill = await broker.buy(symbol, float(qty), ref_price, bundle_dict,
                                             decision.reasoning, pattern_hash)

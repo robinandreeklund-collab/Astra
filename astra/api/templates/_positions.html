@@ -13,6 +13,16 @@
       ({{ "+" if total_pnl_pct >= 0 else "" }}{{ "%.2f"|format(total_pnl_pct*100) }}%)
     </strong>
   </span>
+  {% if heat is defined %}
+  <span class="kv {{ 'pnl-neg' if heat > max_heat else '' }}">
+    <em>Portfolio heat</em>
+    <strong>{{ "%.1f"|format(heat*100) }}% / {{ "%.0f"|format(max_heat*100) }}%</strong>
+  </span>
+  <span class="kv">
+    <em>Top sector</em>
+    <strong>{{ top_sector }} {{ "%.0f"|format(top_sector_pct*100) }}%</strong>
+  </span>
+  {% endif %}
 </div>
 
 <table class="table positions-table">

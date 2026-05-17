@@ -298,6 +298,24 @@ def build_router(app: FastAPI) -> APIRouter:
             })
             total_value += value
             total_cost += cost
+
+        # Portfolio-level risk: total heat + sector concentration.
+        from astra.engine.portfolio_risk import portfolio_heat, sector_exposure
+        from astra.profiles import load_all_profiles
+        profiles = await load_all_profiles(memory)
+        acc = await portfolio.get_account()
+        equity = (float(acc["cash"]) if acc else 0.0) + total_value
+        risk_prices = {p["symbol"]: float(prices.get(p["symbol"]) or p["avg_price"])
+                       for p in positions}
+        stop_pcts = {}
+        for p in positions:
+            prof = profiles.get(p["symbol"])
+            stop_pcts[p["symbol"]] = (prof.adaptive_stop_pct(settings.stop_loss_pct)
+                                      if prof else settings.stop_loss_pct)
+        heat = portfolio_heat(positions, risk_prices, stop_pcts, equity,
+                              settings.stop_loss_pct)
+        exposure = sector_exposure(positions, risk_prices, equity)
+        top_sector = max(exposure.items(), key=lambda x: x[1]) if exposure else ("—", 0.0)
         return templates.TemplateResponse(
             request, "_positions.html",
             {
@@ -306,6 +324,10 @@ def build_router(app: FastAPI) -> APIRouter:
                 "total_cost": total_cost,
                 "total_pnl": total_value - total_cost,
                 "total_pnl_pct": ((total_value - total_cost) / total_cost) if total_cost > 0 else 0.0,
+                "heat": heat,
+                "max_heat": settings.max_portfolio_heat,
+                "top_sector": top_sector[0],
+                "top_sector_pct": top_sector[1],
             },
         )
 

@@ -203,7 +203,7 @@ async def test_card_text_for_new_and_traded():
 
     traded = StockProfile(symbol="BBB")
     for _ in range(6):
-        traded.record_trade_outcome(True, 50, 60, ["macd_bull"])
+        traded.record_trade_outcome(True, 50, 60, ["macd_bull"], r_multiple=1.5)
     card2 = traded.card({"macd_bull": 0.5})
     assert "Record:" in card2
     assert "PROVEN" in card2

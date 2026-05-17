@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # Risk budget per trade for volatility-based sizing (fraction of equity
     # lost if the stop-loss is hit).
     risk_per_trade_pct: float = Field(default=0.02, alias="ASTRA_RISK_PER_TRADE_PCT")
+    # Portfolio-level caps.
+    max_sector_pct: float = Field(default=0.35, alias="ASTRA_MAX_SECTOR_PCT")
+    max_portfolio_heat: float = Field(default=0.25, alias="ASTRA_MAX_PORTFOLIO_HEAT")
 
     # User-supplied priority watchlist, comma-separated. These symbols always
     # get evaluated first; the rest of the slot count is filled from the

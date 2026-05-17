@@ -146,17 +146,25 @@ def _replay_window(
 
             pos = pf.positions.get(sym)
             if pos:
-                pos["hwm"] = max(pos["hwm"], last_close)
-                pct = (last_close - pos["avg"]) / pos["avg"]
-                drop = (last_close - pos["hwm"]) / pos["hwm"]
-                exit_now = (
-                    pct <= -stop_pct or pct >= take_pct
-                    or (drop <= -settings.trailing_stop_pct and pct > 0)
-                )
-                if not exit_now:
-                    exit_now = _heuristic_exit(tech, pos, last_close)
-                if exit_now:
-                    rec = pf.sell(sym, last_close, day)
+                # Intraday-aware exits: a stop/target fires when the day's
+                # range crosses it — filled AT that price, not at the close.
+                bar = window[-1]
+                high, low = float(bar["h"]), float(bar["l"])
+                pos["hwm"] = max(pos["hwm"], high)
+                stop_price = pos["avg"] * (1 - stop_pct)
+                take_price = pos["avg"] * (1 + take_pct)
+                trail_price = pos["hwm"] * (1 - settings.trailing_stop_pct)
+                exit_price = None
+                if low <= stop_price:                       # stop hit intraday
+                    exit_price = stop_price
+                elif high >= take_price:                    # target hit intraday
+                    exit_price = take_price
+                elif low <= trail_price and last_close > pos["avg"]:
+                    exit_price = trail_price
+                elif _heuristic_exit(tech, pos, last_close):
+                    exit_price = last_close
+                if exit_price is not None:
+                    rec = pf.sell(sym, exit_price, day)
                     if rec and learn:
                         _learn(profiles, sym, rec)
                         feats = pos.get("features")

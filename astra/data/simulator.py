@@ -1,55 +1,103 @@
-"""Historical-replay market.
+"""Historical-replay market — intraday.
 
-Simulation mode replays the last year of REAL daily price data, one
-trading day per engine tick. The bot trades against actual market history
-exactly as it would live — with one hard guarantee:
+Simulation mode replays the last year of REAL market data at HOURLY
+resolution (~7 ticks per trading day). The bot trades against actual
+history exactly as it would live, with one hard guarantee:
 
     THE BOT NEVER SEES THE FUTURE.
 
-A cursor marks the current replay day. `candles()` returns only bars at or
-before the cursor; `advance()` reveals the next day. There is no lookahead
-anywhere. This makes the replay an honest out-of-sample test: train the
-models on older data, then watch the trained bot trade a year it has never
-seen and cannot peek into.
+Two clocks:
+  * The cursor moves one HOURLY bar per engine tick — the price path.
+  * Analysis (RSI, MACD, character, profiles) runs on COMPLETED DAILY
+    bars only — days strictly before the cursor's date.
+
+So the bot analyses finished trading days, knows only the current
+intraday price for "today", and exits (stop-loss, take-profit, trailing)
+are checked every hour against the live price — realistic, not just at
+the daily close. No bar dated at or after the cursor is ever visible.
 """
 
 from __future__ import annotations
 
+import bisect
 import logging
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
 
-# How many trading days of history are replayed (≈ one year).
-DEFAULT_REPLAY_DAYS = 252
-# Minimum bars a symbol needs to be included (warm-up for indicators).
-_MIN_BARS = 150
+DEFAULT_REPLAY_DAYS = 252        # ≈ one trading year
+_MIN_HOURLY_BARS = 400           # a symbol needs enough intraday history
+
+
+def _day_key(ts: int) -> int:
+    """UTC date as YYYYMMDD — US market hours all fall on one UTC date."""
+    d = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    return d.year * 10000 + d.month * 100 + d.day
+
+
+def _day_start_ts(day_key: int) -> int:
+    y, m, d = day_key // 10000, (day_key // 100) % 100, day_key % 100
+    return int(datetime(y, m, d, tzinfo=timezone.utc).timestamp())
+
+
+def _resample_daily(hourly: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate hourly bars into completed daily bars."""
+    by_day: OrderedDict[int, list[dict[str, Any]]] = OrderedDict()
+    for b in hourly:
+        by_day.setdefault(_day_key(int(b["t"])), []).append(b)
+    daily: list[dict[str, Any]] = []
+    for day, bars in by_day.items():
+        daily.append({
+            "t": _day_start_ts(day),
+            "day": day,
+            "o": float(bars[0]["o"]),
+            "h": max(float(b["h"]) for b in bars),
+            "l": min(float(b["l"]) for b in bars),
+            "c": float(bars[-1]["c"]),
+            "v": sum(float(b["v"]) for b in bars),
+        })
+    return daily
 
 
 class HistoricalMarket:
-    """Replays real daily candles forward, revealing one day at a time."""
+    """Replays real hourly data forward, one hour per tick."""
 
     def __init__(
         self,
-        history: dict[str, list[dict[str, Any]]],
+        hourly: dict[str, list[dict[str, Any]]],
         replay_days: int = DEFAULT_REPLAY_DAYS,
     ) -> None:
-        # Each symbol's full real history, sorted by timestamp.
-        self.history: dict[str, list[dict[str, Any]]] = {
+        self.hourly: dict[str, list[dict[str, Any]]] = {
             s: sorted(rows, key=lambda c: int(c["t"]))
-            for s, rows in history.items()
+            for s, rows in hourly.items()
         }
-        # A shared timeline of every distinct trading day.
+        # Per-symbol timestamp index for fast price lookups.
+        self._hts: dict[str, list[int]] = {
+            s: [int(c["t"]) for c in rows] for s, rows in self.hourly.items()
+        }
+        # Daily bars (resampled) per symbol — the analysis history.
+        self.daily: dict[str, list[dict[str, Any]]] = {
+            s: _resample_daily(rows) for s, rows in self.hourly.items()
+        }
+        # The shared hourly timeline + each bar's trading date.
         self.timeline: list[int] = sorted(
-            {int(c["t"]) for rows in self.history.values() for c in rows}
-        )
+            {int(c["t"]) for rows in self.hourly.values() for c in rows})
+        self.dates: list[int] = [_day_key(t) for t in self.timeline]
+        self.distinct_days: list[int] = sorted(set(self.dates))
+
         self.replay_days = replay_days
-        # The cursor starts `replay_days` from the end; everything before it
-        # is warm-up history the bot may use, everything after is the future
-        # it must NOT see.
-        self.start_cursor = max(0, len(self.timeline) - replay_days - 1)
+        # Start the cursor `replay_days` trading days from the end.
+        if len(self.distinct_days) > replay_days + 1:
+            start_day = self.distinct_days[-(replay_days + 1)]
+            self.start_cursor = bisect.bisect_left(self.dates, start_day)
+        else:
+            self.start_cursor = 0
         self.cursor = self.start_cursor
+        self._is_new_day = True
+
+    # ---- clock ----
 
     @property
     def current_ts(self) -> int:
@@ -58,60 +106,72 @@ class HistoricalMarket:
         return self.timeline[min(self.cursor, len(self.timeline) - 1)]
 
     @property
+    def current_day(self) -> int:
+        if not self.dates:
+            return 0
+        return self.dates[min(self.cursor, len(self.dates) - 1)]
+
+    @property
+    def is_new_day(self) -> bool:
+        """True when the last advance() crossed into a new trading day."""
+        return self._is_new_day
+
+    @property
     def at_end(self) -> bool:
         return self.cursor >= len(self.timeline) - 1
 
     @property
     def total_replay_days(self) -> int:
-        return max(1, len(self.timeline) - 1 - self.start_cursor)
+        start_day = self.dates[self.start_cursor] if self.dates else 0
+        return max(1, sum(1 for d in self.distinct_days if d >= start_day) - 1)
 
     @property
     def day_number(self) -> int:
-        return self.cursor - self.start_cursor
+        start_day = self.dates[self.start_cursor] if self.dates else 0
+        return sum(1 for d in self.distinct_days
+                   if start_day <= d <= self.current_day) - 1
 
     @property
     def progress(self) -> float:
         return min(1.0, self.day_number / self.total_replay_days)
 
-    def current_date(self) -> str:
+    def current_datetime(self) -> str:
         if not self.timeline:
             return ""
         return datetime.fromtimestamp(
-            self.current_ts, tz=timezone.utc).date().isoformat()
+            self.current_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
     def advance(self) -> None:
-        """Reveal the next trading day."""
+        """Reveal the next hourly bar."""
         if self.cursor < len(self.timeline) - 1:
+            prev_day = self.dates[self.cursor]
             self.cursor += 1
+            self._is_new_day = self.dates[self.cursor] != prev_day
+        else:
+            self._is_new_day = False
+
+    # ---- data access (no lookahead) ----
 
     def candles(self, symbol: str, days: int = 180) -> list[dict[str, Any]]:
-        """Analysis history — only days STRICTLY BEFORE the cursor.
+        """Completed DAILY bars strictly before the cursor's date.
 
-        The bot computes every indicator and signal off completed trading
-        days. The current (cursor) day's full candle is deliberately NOT
-        here — the bot must not see today's high/low/close as if the day
-        were already over. The only thing it knows about 'today' is the
-        current price (see current_price)."""
-        ts = self.current_ts
-        rows = [c for c in self.history.get(symbol, []) if int(c["t"]) < ts]
+        Today's bar is never here — the bot analyses finished days only."""
+        today = self.current_day
+        rows = [c for c in self.daily.get(symbol, []) if c["day"] < today]
         if days and len(rows) > days:
             return rows[-days:]
         return rows
 
     def current_price(self, symbol: str) -> float | None:
-        """The price RIGHT NOW — the close of the cursor day (or the last
-        bar at or before it). This is all the bot knows about today; it is
-        used to fill orders and mark positions, never to compute signals."""
+        """The live intraday price — the close of the symbol's most recent
+        hourly bar at or before the cursor. All the bot knows about 'today'."""
         ts = self.current_ts
-        last = None
-        for c in self.history.get(symbol, []):
-            if int(c["t"]) <= ts:
-                last = c
-            else:
-                break
-        return float(last["c"]) if last else None
+        idx = bisect.bisect_right(self._hts.get(symbol, []), ts) - 1
+        if idx < 0:
+            return None
+        return float(self.hourly[symbol][idx]["c"])
 
-    # Backwards-compatible alias.
+    # Alias kept for callers that used the daily-replay name.
     def last_close(self, symbol: str) -> float | None:
         return self.current_price(symbol)
 
@@ -120,10 +180,11 @@ class HistoricalMarket:
             "active": True,
             "day": self.day_number,
             "total": self.total_replay_days,
-            "date": self.current_date(),
+            "datetime": self.current_datetime(),
             "progress": round(self.progress, 3),
             "at_end": self.at_end,
-            "symbols": len(self.history),
+            "new_day": self._is_new_day,
+            "symbols": len(self.hourly),
         }
 
 
@@ -150,27 +211,22 @@ async def load_market(
     cache: Any,
     replay_days: int = DEFAULT_REPLAY_DAYS,
 ) -> HistoricalMarket:
-    """Load real 5y history for the universe and arm the replay.
-
-    Uses force_real so it fetches actual market data even though sim mode
-    is on. After a training run the 5y candles are already cached, so this
-    is fast."""
+    """Load real hourly history for the universe and arm the replay."""
     global _MARKET
-    from astra.data.yahoo import fetch_daily_candles
+    from astra.data.yahoo import fetch_intraday_candles
 
-    history: dict[str, list[dict[str, Any]]] = {}
+    hourly: dict[str, list[dict[str, Any]]] = {}
     for sym in symbols:
         try:
-            rows = await fetch_daily_candles(
-                sym, days=1825, cache=cache, force_real=True)
-            if len(rows) >= _MIN_BARS:
-                history[sym] = rows
+            rows = await fetch_intraday_candles(sym, cache=cache)
+            if len(rows) >= _MIN_HOURLY_BARS:
+                hourly[sym] = rows
         except Exception as e:
-            log.debug("replay history fetch failed %s: %s", sym, e)
+            log.debug("replay intraday fetch failed %s: %s", sym, e)
 
-    _MARKET = HistoricalMarket(history, replay_days)
+    _MARKET = HistoricalMarket(hourly, replay_days)
     log.info(
-        "Historical replay armed: %d symbols, replaying %d days from %s",
-        len(history), _MARKET.total_replay_days, _MARKET.current_date(),
+        "Intraday replay armed: %d symbols, %d hourly bars, replaying %d days",
+        len(hourly), len(_MARKET.timeline), _MARKET.total_replay_days,
     )
     return _MARKET

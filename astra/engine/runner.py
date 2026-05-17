@@ -163,9 +163,11 @@ class TradingEngine:
         held = {p["symbol"] for p in await self.portfolio.get_positions()}
         universe = await self.ensure_universe()
 
-        # Simulation mode: historical replay. Load the real-data market if
-        # needed, then advance one trading day. The bot only ever sees data
-        # up to the cursor — never the future.
+        # Simulation mode: intraday historical replay. Advance one HOURLY
+        # bar. On a new trading day → full decision cycle; within a day →
+        # a light monitor tick that only checks held positions' stops
+        # against the live intraday price.
+        monitor_only = False
         if settings.simulate_data:
             from astra.data.simulator import get_market, load_market
             market = get_market()
@@ -173,14 +175,18 @@ class TradingEngine:
                 market = await load_market(universe, self.cache)
             market.advance()
             self.state.replay = market.status()
+            monitor_only = not market.is_new_day
             if market.at_end:
                 log.info("Historical replay complete (%d days)",
                          market.total_replay_days)
                 await self.state.broadcast(TickEvent("replay_done", {
-                    "date": market.current_date(),
+                    "datetime": market.current_datetime(),
                     "days": market.total_replay_days,
                 }))
                 self._stop.set()
+
+        if monitor_only:
+            return await self._monitor_tick()
 
         # Load per-stock adaptive profiles + the global signal prior.
         from astra.profiles import load_all_profiles, load_global
@@ -600,6 +606,89 @@ class TradingEngine:
         self.state.tick_count += 1
         self.state.last_error = None
         return {"actions": actions, "equity": equity, "cash": cash}
+
+    async def _monitor_tick(self) -> dict[str, Any]:
+        """Intraday replay tick — no scan, no LLM. Only checks held
+        positions' stop-loss / take-profit / trailing-stop against the live
+        intraday price, so exits fire when the price actually crosses the
+        level, not just at the daily close."""
+        from astra.data.simulator import get_market
+        from astra.profiles import StockProfile, load_all_profiles
+        from astra.signals.aggregator import SignalBundle
+
+        market = get_market()
+        broker = PaperBroker(self.portfolio)
+        recorder = MemoryRecorder(self.portfolio, self.memory)
+        positions = await self.portfolio.get_positions()
+        profiles = await load_all_profiles(self.memory)
+        actions: list[dict[str, Any]] = []
+        prices: dict[str, float] = {}
+
+        for p in positions:
+            symbol = p["symbol"]
+            price = market.current_price(symbol) if market else None
+            if not price or price <= 0:
+                continue
+            prices[symbol] = price
+            avg = float(p["avg_price"])
+            prof = profiles.get(symbol) or StockProfile(symbol=symbol)
+            stop_pct = prof.adaptive_stop_pct(settings.stop_loss_pct)
+            take_pct = prof.adaptive_target_pct(settings.take_profit_pct)
+
+            prev_hwm = float(p.get("high_water_mark") or avg)
+            hwm = max(prev_hwm, price)
+            if hwm > prev_hwm:
+                await self.portfolio.update_high_water_mark(symbol, hwm)
+
+            pct = (price - avg) / avg if avg > 0 else 0.0
+            drop = (price - hwm) / hwm if hwm > 0 else 0.0
+            reason = None
+            if pct <= -stop_pct:
+                reason = (f"STOP-LOSS: {pct*100:.1f}% intraday "
+                          f"(adaptive limit -{stop_pct*100:.1f}%)")
+            elif pct >= take_pct:
+                reason = (f"TAKE-PROFIT: {pct*100:+.1f}% intraday "
+                          f"(adaptive target +{take_pct*100:.1f}%)")
+            elif drop <= -settings.trailing_stop_pct and pct > 0:
+                reason = (f"TRAILING-STOP: {drop*100:.1f}% off the high "
+                          f"(still +{pct*100:.1f}%)")
+            if not reason:
+                continue
+
+            bundle = SignalBundle(symbol=symbol, fetched_at=time.time())
+            ph, pdesc = bundle.pattern_hash()
+            snap = bundle.to_dict()
+            snap["_pattern_desc"] = pdesc
+            snap["_decision"] = {"action": "SELL", "size_pct": 1.0,
+                                 "confidence": 1.0, "reasoning": reason,
+                                 "source": "forced"}
+            try:
+                fill = await broker.sell(symbol, float(p["qty"]), price,
+                                         snap, reason, ph)
+            except NoPosition:
+                continue
+            self.state.last_trade_at[symbol] = time.time()
+            await self.portfolio.log_thought(symbol, "SELL", 1.0, reason)
+            await self.state.broadcast(TickEvent("trade", {
+                "symbol": symbol, "side": "SELL", "qty": fill.qty,
+                "price": fill.price, "pnl": fill.pnl, "reasoning": reason}))
+            sell_trade = await self.portfolio.list_trades(limit=1)
+            if sell_trade:
+                await recorder.record_close(sell_trade[0])
+            actions.append({"symbol": symbol, "action": "SELL",
+                            "qty": fill.qty, "price": fill.price,
+                            "pnl": fill.pnl, "forced": True})
+
+        mtm = {p["symbol"]: prices.get(p["symbol"], p["avg_price"])
+               for p in await self.portfolio.get_positions()}
+        mtm.update(prices)
+        equity, cash = await broker.mark_to_market(mtm)
+        await self.portfolio.append_equity(equity, cash)
+        self.state.last_prices.update(mtm)
+        await self.state.broadcast(TickEvent("equity", {"equity": equity, "cash": cash}))
+        self.state.last_tick = time.time()
+        self.state.tick_count += 1
+        return {"monitor": True, "actions": actions, "equity": equity, "cash": cash}
 
     async def reflect(self) -> dict[str, Any]:
         """Maintenance cycle: distil lessons, refresh per-stock playbooks,

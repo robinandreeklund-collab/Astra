@@ -124,3 +124,64 @@ async def fetch_last_close(symbol: str, cache: CacheDB | None = None) -> float |
     if not rows:
         return None
     return float(rows[-1]["c"])
+
+
+def _fetch_intraday_sync(symbol: str, period: str, interval: str) -> list[dict[str, Any]]:
+    """Blocking yfinance intraday fetch (hourly bars), in a worker thread."""
+    try:
+        ticker = yf.Ticker(symbol)
+        df: pd.DataFrame = ticker.history(
+            period=period, interval=interval, auto_adjust=False)
+        if df is None or df.empty:
+            return []
+        df = df.reset_index()
+        # The index column is "Datetime" for intraday, "Date" for daily.
+        tcol = "Datetime" if "Datetime" in df.columns else "Date"
+        rows: list[dict[str, Any]] = []
+        for _, r in df.iterrows():
+            try:
+                t = int(pd.Timestamp(r[tcol]).timestamp())
+            except Exception:
+                continue
+            rows.append({
+                "t": t,
+                "o": float(r["Open"]),
+                "h": float(r["High"]),
+                "l": float(r["Low"]),
+                "c": float(r["Close"]),
+                "v": float(r["Volume"]) if "Volume" in r else 0.0,
+            })
+        return rows
+    except Exception as e:
+        log.warning("yfinance intraday fetch %s failed: %s", symbol, e)
+        return []
+
+
+async def fetch_intraday_candles(
+    symbol: str,
+    cache: CacheDB | None = None,
+    period: str = "2y",
+    interval: str = "1h",
+) -> list[dict[str, Any]]:
+    """Hourly candles for ~2 years (yfinance's limit for sub-daily history).
+
+    Used to drive the intraday historical replay. Cached for 6h."""
+    sym = symbol.replace(".", "-")
+    cache_key = f"yfi:{sym}:{interval}:{period}"
+
+    hit = _MEM_CACHE.get(cache_key)
+    now = time.time()
+    if hit and now - hit[0] < MAX_CACHE_SECONDS:
+        return hit[1]
+    if cache is not None:
+        disk = await cache.get(cache_key)
+        if disk and isinstance(disk, list) and disk:
+            _MEM_CACHE[cache_key] = (now, disk)
+            return disk
+
+    rows = await asyncio.to_thread(_fetch_intraday_sync, sym, period, interval)
+    if rows:
+        _MEM_CACHE[cache_key] = (now, rows)
+        if cache is not None:
+            await cache.set(cache_key, rows, ttl_seconds=MAX_CACHE_SECONDS)
+    return rows

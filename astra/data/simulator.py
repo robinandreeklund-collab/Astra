@@ -178,7 +178,7 @@ class HistoricalMarket:
     def status(self) -> dict[str, Any]:
         return {
             "active": True,
-            "day": self.day_number,
+            "day": self.day_number + 1,          # 1-indexed for display
             "total": self.total_replay_days,
             "datetime": self.current_datetime(),
             "progress": round(self.progress, 3),

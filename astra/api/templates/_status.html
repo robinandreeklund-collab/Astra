@@ -12,7 +12,9 @@
   </span>
   {% if simulate_data %}
   <span class="kv"><em>Data</em><strong class="sim">◈ REPLAY</strong></span>
-  {% if replay and replay.total %}
+  {% if replay and replay.loading %}
+  <span class="kv"><em>Replay</em><strong class="sim">loading data…</strong></span>
+  {% elif replay and replay.total %}
   <span class="kv"><em>Replay</em>
     <strong class="sim">day {{ replay.day }}/{{ replay.total }} · {{ replay.datetime }}</strong>
   </span>

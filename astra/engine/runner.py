@@ -165,17 +165,21 @@ class TradingEngine:
 
         # Simulation mode: intraday historical replay. Advance one HOURLY
         # bar. On a new trading day → full decision cycle; within a day →
-        # a light monitor tick that only checks held positions' stops
-        # against the live intraday price.
+        # a light monitor tick that only checks held positions' stops.
+        # The very first replay tick loads the data and runs a FULL cycle
+        # on the starting day (no advance yet) so the bot trades from tick 1.
         monitor_only = False
         if settings.simulate_data:
             from astra.data.simulator import get_market, load_market
             market = get_market()
             if market is None:
+                self.state.replay = {"loading": True}
                 market = await load_market(universe, self.cache)
-            market.advance()
+                monitor_only = False  # first tick = full cycle
+            else:
+                market.advance()
+                monitor_only = not market.is_new_day
             self.state.replay = market.status()
-            monitor_only = not market.is_new_day
             if market.at_end:
                 log.info("Historical replay complete (%d days)",
                          market.total_replay_days)

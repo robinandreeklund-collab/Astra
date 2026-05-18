@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 import astra.data.simulator as sim
@@ -87,3 +89,41 @@ async def test_monitor_tick_holds_when_no_stop_breached(
     assert await portfolio_db.get_position("AAA") is not None
     sim.reset_market()
     settings.simulate_data = False
+
+
+async def test_daily_loss_guard_keys_on_replay_day(
+    portfolio_db, memory_db, cache_db
+):
+    """The daily-loss guard must reset per REPLAY day — never stay blocked
+    for the whole real session after one bad replay day."""
+    import asyncio as _aio
+
+    settings.simulate_data = True
+    settings.scan_top_n = 3
+    await portfolio_db.create_account(25_000)
+    await memory_db.start_generation(25_000)
+    sim.reset_market()
+
+    state = EngineState()
+    engine = TradingEngine(portfolio_db, memory_db, cache_db, state)
+    engine.ensure_universe = lambda: _aio.sleep(
+        0, result=["AAA", "BBB", "CCC"])
+    # Feed the loader synthetic hourly data so no network is needed.
+    async def fake_load(symbols, cache, replay_days=252):
+        sim._MARKET = HistoricalMarket(
+            {s: _hourly_falling(400) for s in symbols}, replay_days=60)
+        return sim._MARKET
+    with patch("astra.data.simulator.load_market", new=fake_load):
+        seen_days = set()
+        for _ in range(60):
+            await engine.tick()
+            if state.day_key is not None:
+                seen_days.add(state.day_key)
+
+    # The guard's day key advanced through several distinct REPLAY days
+    # (an int YYYYMMDD), not a single frozen wall-clock date.
+    assert len(seen_days) >= 3
+    assert all(isinstance(d, int) for d in seen_days)
+    sim.reset_market()
+    settings.simulate_data = False
+

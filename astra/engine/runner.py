@@ -55,6 +55,9 @@ class EngineState:
         self.regime: dict[str, Any] = {"regime": "unknown"}
         # Historical-replay progress (when simulation mode is on).
         self.replay: dict[str, Any] = {}
+        # Daily-loss guard: the current day's key + the equity it opened at.
+        self.day_key: Any = None
+        self.day_start_equity: float = 0.0
         # Per-symbol last decision: {bar_ts, action, decided_at}. Used to skip
         # re-deciding a symbol when the underlying daily data hasn't changed.
         self.last_decision: dict[str, dict[str, Any]] = {}
@@ -280,12 +283,30 @@ class TradingEngine:
             cooldown_sec = settings.cooldown_minutes * 60
             open_count = len(await self.portfolio.get_positions())
 
-            # Daily loss guard: if we're down past the limit today, block new
-            # entries for the rest of the day. Exits still run normally.
-            entries_blocked, block_reason = await risk.can_trade_today()
-            entries_blocked = not entries_blocked
+            # Daily loss guard. The "day" is the REPLAY day in sim mode and
+            # the wall-clock day live — never wall-clock during a replay,
+            # which would leave entries blocked for the whole real session
+            # after one bad replay day. The day-start equity is snapshotted
+            # when the day rolls over; if the loss since then breaches the
+            # limit, new entries are blocked for that day only.
+            equity_pts = await self.portfolio.equity_history(limit=1)
+            current_equity = (equity_pts[-1]["equity"] if equity_pts
+                              else float(acc["cash"]))
+            if settings.simulate_data and market is not None:
+                day_key: Any = market.current_day
+            else:
+                day_key = datetime.now(timezone.utc).date().isoformat()
+            if self.state.day_key != day_key:
+                self.state.day_key = day_key
+                self.state.day_start_equity = current_equity
+            day_start = self.state.day_start_equity or current_equity
+            day_loss = ((current_equity - day_start) / day_start
+                        if day_start > 0 else 0.0)
+            entries_blocked = day_loss < -settings.daily_loss_limit_pct
             if entries_blocked:
-                log.info("Entries blocked today: %s", block_reason)
+                log.info("Entries blocked: day loss %.1f%% past the "
+                         "%.0f%% limit", day_loss * 100,
+                         settings.daily_loss_limit_pct * 100)
 
             async def _do_sell(symbol, pos, ref_price, bundle, reasoning, source):
                 """Close 100% of a position. All-or-nothing — no partial sells."""
